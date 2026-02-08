@@ -28,7 +28,7 @@ function LivePusher() {
 
   const pusherRef = useRef<any>(null);
   const deviceManagerRef = useRef<any>(null);
-  // const localStreamRef = useRef<MediaStream | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
 
   const WS_SERVER = "wss://www.uiofield.top/meya/ws";
   const WEB_SERVER = "https://www.uiofield.top/meya/push"
@@ -81,6 +81,7 @@ function LivePusher() {
   useEffect(() => {
     const ws = new WebSocket(WS_SERVER);
     wsRef.current = ws;
+    startLocalPreview()
     ws.onopen = () => {
       setWsStatus('已连接');
 
@@ -124,70 +125,51 @@ function LivePusher() {
     };
   }, []);
 
-  const resetRenderView = () => {
-    const container = document.getElementById('videoContainer');
-    if (container) {
-      container.innerHTML = ''; // ⭐ 关键：清空旧 video / canvas
+  const startLocalPreview = async (deviceId?: string) => {
+    const videoEl = document.getElementById(
+        'videoContainer'
+    ) as HTMLVideoElement | null;
+
+    if (!videoEl) return;
+
+    // 1️⃣ 停掉旧流
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => t.stop());
+      localStreamRef.current = null;
     }
+
+    // 2️⃣ 使用指定摄像头（或当前选中）
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: deviceId
+          ? { deviceId: { exact: deviceId } }
+          : true,
+      audio: false
+    });
+
+    localStreamRef.current = stream;
+
+    // 3️⃣ 绑定到 video
+    videoEl.srcObject = stream;
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.setAttribute('webkit-playsinline', 'true');
+
+    await videoEl.play();
   };
 
-  /**
-   * 压缩图片（iOS 原图友好）
-   * @param file 原始图片文件
-   * @param maxSize 最大边长（默认 1280）
-   * @param quality jpeg 质量（0~1，默认 0.7）
-   */
-  const compressImage = (
-      file: File,
-      maxSize = 1280,
-      quality = 0.7
-  ): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
+  const stopLocalPreview = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => t.stop());
+      localStreamRef.current = null;
+    }
 
-      reader.onload = () => {
-        const img = new Image();
+    const videoEl = document.getElementById(
+        'videoContainer'
+    ) as HTMLVideoElement | null;
 
-        img.onload = () => {
-          let { width, height } = img;
-
-          // 等比缩放
-          if (width > height && width > maxSize) {
-            height = Math.round((height * maxSize) / width);
-            width = maxSize;
-          } else if (height > maxSize) {
-            width = Math.round((width * maxSize) / height);
-            height = maxSize;
-          }
-
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            reject(new Error('Canvas 不支持'));
-            return;
-          }
-
-          ctx.drawImage(img, 0, 0, width, height);
-
-          // ⭐ 强制转 jpeg（解决 iOS HEIC 问题）
-          const compressedBase64 = canvas.toDataURL(
-              'image/jpeg',
-              quality
-          );
-
-          resolve(compressedBase64);
-        };
-
-        img.onerror = reject;
-        img.src = reader.result as string;
-      };
-
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+    if (videoEl) {
+      videoEl.srcObject = null;
+    }
   };
 
   const handleUploadTemplate = () => {
@@ -198,32 +180,31 @@ function LivePusher() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    try {
-      // ⭐ iOS 原图压缩
-      const compressedBase64 = await compressImage(
-          file,
-          1280, // 最大边
-          0.7   // 质量
-      );
+    const reader = new FileReader();
 
-      await fetch(WEB_SERVER, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          type: 'upload_template',
-          filename: file.name.replace(/\.\w+$/, '.jpg'),
-          contentType: 'image/jpeg',
-          streamUrl: 'http://play.uiofield.top/live/stream.flv',
-          data: compressedBase64
-        })
-      });
-    } catch (err) {
-      console.error('图片压缩或上传失败', err);
-    }
+    reader.onload = async () => {
+      try {
+        await fetch(WEB_SERVER, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            type: 'upload_template',
+            filename: file.name,
+            contentType: file.type,
+            streamUrl: "http://play.uiofield.top/live/stream.flv",
+            data: reader.result // base64
+          })
+        });
+      } catch (err) {
+        console.error('文件上传失败', err);
+      }
+    };
 
-    // 允许重复选择同一张
+    reader.readAsDataURL(file);
+
+    // 清空 input，允许重复上传同一张
     e.target.value = '';
   };
 
@@ -255,14 +236,11 @@ function LivePusher() {
       setError('');
       setStreamStatus('初始化推流器...');
 
-      // ⭐ 每次启动前，先清空渲染容器
-      resetRenderView();
-
       const pusher = new window.TXLivePusher();
       pusherRef.current = pusher;
 
-      pusher.setRenderView('videoContainer');
-      pusher.videoView.muted = true;
+      // const videoEl = document.getElementById('videoContainer');
+      // pusher.setRenderView(videoEl);
 
       pusher.setVideoQuality('480p');
       pusher.setProperty('setVideoFPS', 25);
@@ -274,11 +252,6 @@ function LivePusher() {
       });
 
       await pusher.startCamera();
-
-      if (selectedCamera) {
-        await pusher.getDeviceManager().switchCamera(selectedCamera);
-      }
-
       await pusher.startPush(PUSH_URL);
 
       setIsStreaming(true);
@@ -301,9 +274,6 @@ function LivePusher() {
     pusherRef.current = null;
     setIsStreaming(false);
     setStreamStatus('未连接');
-
-    // ⭐ 防止残留 DOM
-    resetRenderView();
   };
 
   /** 摄像头开关 */
@@ -323,22 +293,26 @@ function LivePusher() {
     return /iP(hone|od|ad)/.test(navigator.userAgent);
   };
 
+  const handleCameraChange = async (deviceId: string) => {
+    stopLocalPreview()
+    setSelectedCamera(deviceId);
+    startLocalPreview(deviceId)
+  };
+
 
   return (
       <div className="p-6 bg-slate-900 min-h-screen">
         <div className="max-w-4xl mx-auto space-y-6">
           <h1 className="text-3xl font-bold text-white">腾讯云 Web 推流</h1>
 
-          <div className="bg-black aspect-video rounded-xl relative">
-            <div id="videoContainer" className="w-full h-full" />
-            {!isStreaming && (
-                <div className="absolute inset-0 flex items-center justify-center text-slate-500">
-                  <Video className="w-14 h-14" />
-                </div>
-            )}
-          </div>
+          <video
+              id="videoContainer"
+              className="w-full h-full object-cover"
+              muted
+              playsInline
+          />
 
-            <div className="flex items-center justify-between text-white">
+          <div className="flex items-center justify-between text-white">
             <span>{streamStatus}</span>
 
             <span
@@ -409,7 +383,7 @@ function LivePusher() {
             <select
                 disabled={isStreaming}
                 value={selectedCamera}
-                onChange={e => setSelectedCamera(e.target.value)}
+                onChange={e => handleCameraChange(e.target.value)}
                 className="w-full mt-2 bg-slate-800 text-white p-2 rounded"
             >
               {devices.map((d, i) => (
