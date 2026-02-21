@@ -32,6 +32,11 @@ function LivePusher() {
   const [personCenterPosition, setPersonCenterPosition] = useState('眼睛');
   const [faceCenterOffsetDeg, setFaceCenterOffsetDeg] = useState(5);
   const [alignmentError, setAlignmentError] = useState('');
+  const [moveGuide, setMoveGuide] = useState<{
+    pitch?: number;
+    roll?: number;
+    circle?: number;
+  } | null>(null);
 
   const pusherRef = useRef<any>(null);
   const deviceManagerRef = useRef<any>(null);
@@ -106,11 +111,29 @@ function LivePusher() {
     //   ].slice(0, 10));
     // };
     ws.onmessage = event => {
-      const msg =
-          typeof event.data === 'string'
-              ? event.data
-              : JSON.stringify(event.data);
+      const normalizeMessage = (data: unknown) => {
+        if (typeof data !== 'string') {
+          return JSON.stringify(data);
+        }
 
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed && parsed.type === 'move' && parsed.move) {
+            setMoveGuide({
+              pitch: parsed.move.pitch,
+              roll: parsed.move.roll,
+              circle: parsed.move.circle
+            });
+          }
+          return JSON.stringify(parsed);
+        } catch {
+          return data.replace(/\\u([\dA-Fa-f]{4})/g, (_, code) =>
+              String.fromCharCode(parseInt(code, 16))
+          );
+        }
+      };
+
+      const msg = normalizeMessage(event.data);
       setMessages(prev => [msg, ...prev].slice(0, 10));
     };
 
@@ -201,22 +224,25 @@ function LivePusher() {
     fileInputRef.current?.click();
   };
 
-  const handleSubmitAlignmentPerson = () => {
+  const handleSubmitAlignmentPerson = async () => {
     setAlignmentError('');
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      setAlignmentError('WebSocket 未连接，无法提交');
-      return;
-    }
-
-    ws.send(
-        JSON.stringify({
+    try {
+      await fetch(WEB_SERVER, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
           type: 'alignment_person',
           person_ratio_percent: personRatioPercent,
           center_position: personCenterPosition,
           face_center_offset_deg: faceCenterOffsetDeg
         })
-    );
+      });
+    } catch (err) {
+      console.error('提交对准-人失败', err);
+      setAlignmentError('提交失败');
+    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -354,11 +380,65 @@ function LivePusher() {
         <div className="max-w-4xl mx-auto space-y-6">
           <h1 className="text-3xl font-bold text-white">腾讯云 Web 推流</h1>
 
-          <div className="bg-black aspect-video rounded-xl relative">
+          <div className="bg-black aspect-video rounded-xl relative overflow-hidden">
             <div id="videoContainer" className="w-full h-full" />
             {!isStreaming && (
                 <div className="absolute inset-0 flex items-center justify-center text-slate-500">
                   <Video className="w-14 h-14" />
+                </div>
+            )}
+
+            {moveGuide && (
+                <div className="absolute inset-0 pointer-events-none text-white">
+                  {moveGuide.pitch !== undefined && moveGuide.pitch !== 0 && (
+                      <div className="absolute left-1/2 -translate-x-1/2 top-4 flex flex-col items-center">
+                        <div className="text-xs bg-black/60 px-2 py-1 rounded">
+                          {moveGuide.pitch > 0 ? '向前' : '向后'}
+                        </div>
+                        <div
+                            className={`w-0 h-0 border-l-[10px] border-r-[10px] border-l-transparent border-r-transparent ${
+                                moveGuide.pitch > 0
+                                    ? 'border-b-[18px] border-b-emerald-400 mt-2'
+                                    : 'border-t-[18px] border-t-emerald-400 mt-2'
+                            }`}
+                        />
+                      </div>
+                  )}
+
+                  {moveGuide.roll !== undefined && moveGuide.roll !== 0 && (
+                      <div className="absolute top-1/2 -translate-y-1/2 right-4 flex items-center">
+                        {moveGuide.roll < 0 && (
+                            <div
+                                className="w-0 h-0 border-t-[10px] border-b-[10px] border-t-transparent border-b-transparent border-r-[18px] border-r-emerald-400 mr-2"
+                            />
+                        )}
+                        <div className="text-xs bg-black/60 px-2 py-1 rounded">
+                          {moveGuide.roll > 0 ? '向右' : '向左'}
+                        </div>
+                        {moveGuide.roll > 0 && (
+                            <div
+                                className="w-0 h-0 border-t-[10px] border-b-[10px] border-t-transparent border-b-transparent border-l-[18px] border-l-emerald-400 ml-2"
+                            />
+                        )}
+                      </div>
+                  )}
+
+                  {moveGuide.circle !== undefined && moveGuide.circle !== 0 && (
+                      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2">
+                        <div className="text-xs bg-black/60 px-2 py-1 rounded">
+                          {moveGuide.circle > 0 ? '顺时针转' : '逆时针转'}
+                        </div>
+                        <div className="w-8 h-8 rounded-full border-2 border-emerald-400 relative">
+                          <div
+                              className={`absolute -top-1 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-l-transparent border-r-transparent ${
+                                  moveGuide.circle > 0
+                                      ? 'border-b-[10px] border-b-emerald-400'
+                                      : 'border-t-[10px] border-t-emerald-400'
+                              }`}
+                          />
+                        </div>
+                      </div>
+                  )}
                 </div>
             )}
           </div>
@@ -380,7 +460,7 @@ function LivePusher() {
             )}
           </div>
           <div className="bg-slate-800 rounded-xl p-4 text-white">
-            <div className="text-slate-300 mb-2">WebSocket 消息</div>
+            <div className="text-slate-300 mb-2">指令控制台</div>
 
             <div className="max-h-48 overflow-y-auto space-y-1 text-sm">
               {messages.length === 0 && (
@@ -416,13 +496,6 @@ function LivePusher() {
               {isCameraOn ? <Video /> : <VideoOff />}
             </button>
 
-            {/* ⭐ 新增上传模版图按钮 */}
-            <button
-                onClick={handleUploadTemplate}
-                className="px-4 py-3 bg-slate-700 rounded-xl text-white"
-            >
-              以图搜景
-            </button>
           </div>
 
           <div className="bg-slate-800 rounded-xl p-4 text-white">
@@ -447,6 +520,17 @@ function LivePusher() {
                 对准-人
               </button>
             </div>
+
+            {activeMode === 'image_search' && (
+                <div className="mt-4">
+                  <button
+                      onClick={handleUploadTemplate}
+                      className="w-full py-2 rounded-xl bg-slate-700 text-white"
+                  >
+                    以图搜景
+                  </button>
+                </div>
+            )}
 
             {activeMode === 'alignment_person' && (
                 <div className="mt-4 space-y-3">
