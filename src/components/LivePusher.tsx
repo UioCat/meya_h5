@@ -294,9 +294,13 @@ function LivePusher() {
 
     setDevices(cameras);
 
-    // ⭐ 默认选第一个
+    // ⭐ 默认优先后置摄像头
     if (cameras.length) {
-      setSelectedCamera(prev => prev || cameras[0].deviceId);
+      const backCamera =
+          cameras.find(c =>
+              /back|rear|environment|后置|后摄|主摄/i.test(c.label || '')
+          ) || cameras[0];
+      setSelectedCamera(prev => prev || backCamera.deviceId);
     }
   };
 
@@ -326,8 +330,11 @@ function LivePusher() {
 
       await pusher.startCamera();
 
-      if (selectedCamera) {
+      const defaultCameraId = devices[0]?.deviceId;
+      if (selectedCamera && selectedCamera !== defaultCameraId) {
         await pusher.getDeviceManager().switchCamera(selectedCamera);
+        // 切换摄像头后等待 1s 再启动推流，避免黑屏
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
       await pusher.startPush(PUSH_URL);
