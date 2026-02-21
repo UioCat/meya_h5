@@ -25,6 +25,13 @@ function LivePusher() {
 
   const [wsStatus, setWsStatus] = useState('未连接');
   const [messages, setMessages] = useState<string[]>([]);
+  const [activeMode, setActiveMode] = useState<'image_search' | 'alignment_person'>(
+      'image_search'
+  );
+  const [personRatioPercent, setPersonRatioPercent] = useState(30);
+  const [personCenterPosition, setPersonCenterPosition] = useState('眼睛');
+  const [faceCenterOffsetDeg, setFaceCenterOffsetDeg] = useState(5);
+  const [alignmentError, setAlignmentError] = useState('');
 
   const pusherRef = useRef<any>(null);
   const deviceManagerRef = useRef<any>(null);
@@ -33,7 +40,7 @@ function LivePusher() {
   const WS_SERVER = "wss://www.uiofield.top/meya/ws";
   const WEB_SERVER = "https://www.uiofield.top/meya/push"
   const PUSH_URL =
-      'webrtc://226975.push.tlivecloud.com/live/stream?txSecret=a6fe99d6b2031929737cecbca4b45c1a&txTime=69895CD3';
+      'webrtc://226975.push.tlivecloud.com/live/stream?txSecret=693abaae6e8346597f7e6c9d30cab682&txTime=69CABA52';
 
   /** 浏览器兼容性检测 */
   // useEffect(() => {
@@ -192,6 +199,24 @@ function LivePusher() {
 
   const handleUploadTemplate = () => {
     fileInputRef.current?.click();
+  };
+
+  const handleSubmitAlignmentPerson = () => {
+    setAlignmentError('');
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setAlignmentError('WebSocket 未连接，无法提交');
+      return;
+    }
+
+    ws.send(
+        JSON.stringify({
+          type: 'alignment_person',
+          person_ratio_percent: personRatioPercent,
+          center_position: personCenterPosition,
+          face_center_offset_deg: faceCenterOffsetDeg
+        })
+    );
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -396,8 +421,85 @@ function LivePusher() {
                 onClick={handleUploadTemplate}
                 className="px-4 py-3 bg-slate-700 rounded-xl text-white"
             >
-              上传模版图
+              以图搜景
             </button>
+          </div>
+
+          <div className="bg-slate-800 rounded-xl p-4 text-white">
+            <div className="text-slate-300 mb-3">模式</div>
+            <div className="flex space-x-3">
+              <button
+                  onClick={() => setActiveMode('image_search')}
+                  className={`px-4 py-2 rounded-xl ${
+                      activeMode === 'image_search' ? 'bg-blue-500' : 'bg-slate-700'
+                  }`}
+              >
+                以图搜景
+              </button>
+              <button
+                  onClick={() => setActiveMode('alignment_person')}
+                  className={`px-4 py-2 rounded-xl ${
+                      activeMode === 'alignment_person'
+                          ? 'bg-blue-500'
+                          : 'bg-slate-700'
+                  }`}
+              >
+                对准-人
+              </button>
+            </div>
+
+            {activeMode === 'alignment_person' && (
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <label className="text-slate-300 text-sm">人体占比百分比</label>
+                    <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={personRatioPercent}
+                        onChange={e => setPersonRatioPercent(Number(e.target.value))}
+                        className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-slate-300 text-sm">居中位置</label>
+                    <select
+                        value={personCenterPosition}
+                        onChange={e => setPersonCenterPosition(e.target.value)}
+                        className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
+                    >
+                      <option value="眼睛">眼睛</option>
+                      <option value="肩膀">肩膀</option>
+                      <option value="髋部">髋部</option>
+                      <option value="膝盖">膝盖</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-slate-300 text-sm">人脸居中偏差度数</label>
+                    <input
+                        type="number"
+                        step={1}
+                        value={faceCenterOffsetDeg}
+                        onChange={e => setFaceCenterOffsetDeg(Number(e.target.value))}
+                        className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
+                    />
+                  </div>
+
+                  <button
+                      onClick={handleSubmitAlignmentPerson}
+                      className="w-full py-2 rounded-xl bg-emerald-500 text-white"
+                  >
+                    提交
+                  </button>
+
+                  {alignmentError && (
+                      <div className="text-red-400 text-sm">{alignmentError}</div>
+                  )}
+                </div>
+            )}
           </div>
 
           {error && (
