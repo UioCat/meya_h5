@@ -4,6 +4,7 @@ import { Video, VideoOff, Radio } from 'lucide-react';
 declare global {
   interface Window {
     TXLivePusher: any;
+    flvjs?: any;
   }
 }
 
@@ -25,9 +26,15 @@ function LivePusher() {
 
   const [wsStatus, setWsStatus] = useState('未连接');
   const [messages, setMessages] = useState<string[]>([]);
-  const [activeMode, setActiveMode] = useState<'image_search' | 'alignment_person'>(
+  const [activeMode, setActiveMode] = useState<'image_search' | 'alignment_person' | 'spectator'>(
       'image_search'
   );
+  const [spectatorFlvUrl, setSpectatorFlvUrl] = useState('http://localhost:1985/rtc/v1/whep/?app=live&stream=stream.flv');
+  const [spectatorIsLive, setSpectatorIsLive] = useState(true);
+  const [spectatorWithCredentials, setSpectatorWithCredentials] = useState(false);
+  const [spectatorHasAudio, setSpectatorHasAudio] = useState(true);
+  const [spectatorHasVideo, setSpectatorHasVideo] = useState(true);
+  const [spectatorLogs, setSpectatorLogs] = useState<string[]>([]);
   const [personRatioPercent, setPersonRatioPercent] = useState(30);
   const [personRatioPercentOffset, setPersonRatioPercentOffset] = useState(5);
   const [personCenterPosition, setPersonCenterPosition] = useState('眼睛');
@@ -64,6 +71,9 @@ function LivePusher() {
   const [taskOffNotice, setTaskOffNotice] = useState(false);
   const taskOffTimerRef = useRef<number | null>(null);
   const videoWrapRef = useRef<HTMLDivElement | null>(null);
+  const spectatorVideoRef = useRef<HTMLVideoElement | null>(null);
+  const spectatorFlvPlayerRef = useRef<any>(null);
+  const spectatorPcRef = useRef<RTCPeerConnection | null>(null);
 
   const pusherRef = useRef<any>(null);
   const deviceManagerRef = useRef<any>(null);
@@ -349,6 +359,207 @@ function LivePusher() {
     return () => ro.disconnect();
   }, []);
 
+  const destroySpectatorFlvPlayer = () => {
+    if (spectatorFlvPlayerRef.current) {
+      try {
+        spectatorFlvPlayerRef.current.pause();
+      } catch {}
+      try {
+        spectatorFlvPlayerRef.current.unload();
+      } catch {}
+      try {
+        spectatorFlvPlayerRef.current.detachMediaElement();
+      } catch {}
+      try {
+        spectatorFlvPlayerRef.current.destroy();
+      } catch {}
+      spectatorFlvPlayerRef.current = null;
+    }
+  };
+
+  const destroySpectatorWhepPlayer = () => {
+    if (spectatorPcRef.current) {
+      try {
+        spectatorPcRef.current.close();
+      } catch {}
+      spectatorPcRef.current = null;
+    }
+  };
+
+  const appendSpectatorLog = (line: string) => {
+    const ts = new Date().toLocaleTimeString();
+    setSpectatorLogs(prev => [`[${ts}] ${line}`, ...prev].slice(0, 80));
+  };
+
+  const loadFlvJs = (): Promise<any | null> => {
+    if (window.flvjs) return Promise.resolve(window.flvjs);
+    return new Promise(resolve => {
+      const existing = document.getElementById('flvjs-script') as HTMLScriptElement | null;
+      if (existing) {
+        existing.addEventListener('load', () => resolve(window.flvjs || null), { once: true });
+        existing.addEventListener('error', () => resolve(null), { once: true });
+        return;
+      }
+      const script = document.createElement('script');
+      script.id = 'flvjs-script';
+      script.src = 'https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js';
+      script.async = true;
+      script.onload = () => resolve(window.flvjs || null);
+      script.onerror = () => resolve(null);
+      document.head.appendChild(script);
+    });
+  };
+
+  const whepLoad = async (url: string) => {
+    const video = spectatorVideoRef.current;
+    if (!video) return false;
+    destroySpectatorFlvPlayer();
+    destroySpectatorWhepPlayer();
+    video.removeAttribute('src');
+    video.load();
+
+    const pc = new RTCPeerConnection();
+    spectatorPcRef.current = pc;
+    const remoteStream = new MediaStream();
+    video.srcObject = remoteStream;
+    pc.ontrack = event => {
+      event.streams[0]?.getTracks().forEach(track => {
+        if (!remoteStream.getTracks().some(t => t.id === track.id)) {
+          remoteStream.addTrack(track);
+        }
+      });
+    };
+
+    pc.addTransceiver('audio', { direction: 'recvonly' });
+    pc.addTransceiver('video', { direction: 'recvonly' });
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await new Promise<void>(resolve => {
+      if (pc.iceGatheringState === 'complete') {
+        resolve();
+        return;
+      }
+      const handler = () => {
+        if (pc.iceGatheringState === 'complete') {
+          pc.removeEventListener('icegatheringstatechange', handler);
+          resolve();
+        }
+      };
+      pc.addEventListener('icegatheringstatechange', handler);
+      setTimeout(() => {
+        pc.removeEventListener('icegatheringstatechange', handler);
+        resolve();
+      }, 1500);
+    });
+
+    const answerResp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/sdp' },
+      body: pc.localDescription?.sdp || offer.sdp
+    });
+    if (!answerResp.ok) {
+      throw new Error(`WHEP HTTP ${answerResp.status}`);
+    }
+    const answerSdp = await answerResp.text();
+    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    appendSpectatorLog(`whep_load: ${url}`);
+    return true;
+  };
+
+  const flvLoad = async () => {
+    const video = spectatorVideoRef.current;
+    if (!video) return false;
+    if (activeMode !== 'spectator') return false;
+
+    const targetUrl = spectatorFlvUrl || 'http://localhost:8080/live/stream.flv';
+    const isWhep = /\/rtc\/v1\/whep\//.test(targetUrl);
+    if (isWhep) {
+      try {
+        return await whepLoad(targetUrl);
+      } catch (err) {
+        appendSpectatorLog(`whep_error: ${String(err)}`);
+        return false;
+      }
+    }
+
+    const flvjs = await loadFlvJs();
+    destroySpectatorFlvPlayer();
+    destroySpectatorWhepPlayer();
+    video.srcObject = null;
+    video.removeAttribute('src');
+    video.load();
+
+    if (flvjs?.isSupported?.()) {
+      const mediaDataSource = {
+        type: 'flv',
+        url: targetUrl,
+        isLive: spectatorIsLive,
+        withCredentials: spectatorWithCredentials,
+        hasAudio: spectatorHasAudio,
+        hasVideo: spectatorHasVideo
+      };
+      appendSpectatorLog(`flv_load: ${targetUrl}`);
+      const player = flvjs.createPlayer(mediaDataSource, {
+        enableWorker: false,
+        lazyLoadMaxDuration: 3 * 60,
+        seekType: 'range'
+      });
+      spectatorFlvPlayerRef.current = player;
+      if (flvjs.Events?.ERROR) {
+        player.on(flvjs.Events.ERROR, (errorType: string, errorDetail: string, errorInfo: unknown) => {
+          appendSpectatorLog(`flv_error: ${errorType} / ${errorDetail} / ${JSON.stringify(errorInfo)}`);
+        });
+      }
+      player.attachMediaElement(video);
+      player.load();
+      return true;
+    }
+
+    // flv.js 不可用时回退原生 video
+    appendSpectatorLog(`flv.js 不可用，回退原生播放: ${targetUrl}`);
+    video.src = targetUrl;
+    return true;
+  };
+
+  const flvStart = async () => {
+    const video = spectatorVideoRef.current;
+    if (!video) return;
+    await video.play().catch(() => {});
+    appendSpectatorLog('flv_start');
+  };
+
+  const flvPause = () => {
+    const video = spectatorVideoRef.current;
+    if (!video) return;
+    video.pause();
+    appendSpectatorLog('flv_pause');
+  };
+
+  const flvDestroy = () => {
+    const video = spectatorVideoRef.current;
+    if (!video) return;
+    destroySpectatorFlvPlayer();
+    destroySpectatorWhepPlayer();
+    video.pause();
+    video.srcObject = null;
+    video.removeAttribute('src');
+    video.load();
+    appendSpectatorLog('flv_destroy');
+  };
+
+  useEffect(() => {
+    const video = spectatorVideoRef.current;
+    if (!video) return;
+    if (activeMode !== 'spectator' || !isStreaming) {
+      destroySpectatorFlvPlayer();
+      destroySpectatorWhepPlayer();
+      video.pause();
+      return;
+    }
+    flvLoad();
+  }, [activeMode, isStreaming]);
+
   const resetRenderView = () => {
     const container = document.getElementById('videoContainer');
     if (container) {
@@ -510,6 +721,13 @@ function LivePusher() {
   const startStream = async () => {
     try {
       setError('');
+      if (activeMode === 'spectator') {
+        setStreamStatus('启动旁观模式...');
+        setIsStreaming(true);
+        setStreamStatus('旁观中');
+        return;
+      }
+
       setStreamStatus('初始化推流器...');
 
       // ⭐ 每次启动前，先清空渲染容器
@@ -551,14 +769,24 @@ function LivePusher() {
 
   /** 停止推流 */
   const stopStream = () => {
-    if (!pusherRef.current) return;
+    const video = spectatorVideoRef.current;
+    destroySpectatorFlvPlayer();
+    destroySpectatorWhepPlayer();
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+      video.removeAttribute('src');
+      video.load();
+    }
 
-    try {
-      pusherRef.current.stopPush();
-      pusherRef.current.stopCamera();
-    } catch {}
+    if (pusherRef.current) {
+      try {
+        pusherRef.current.stopPush();
+        pusherRef.current.stopCamera();
+      } catch {}
+      pusherRef.current = null;
+    }
 
-    pusherRef.current = null;
     setIsStreaming(false);
     setStreamStatus('未连接');
     setRenderAspect(null);
@@ -592,7 +820,7 @@ function LivePusher() {
 
           <div
               className="bg-black rounded-xl relative overflow-hidden"
-              style={renderAspect ? { aspectRatio: renderAspect } : undefined}
+              style={{ aspectRatio: renderAspect || '16 / 9' }}
               ref={videoWrapRef}
           >
             <div id="videoContainer" className="w-full h-full" />
@@ -604,8 +832,25 @@ function LivePusher() {
                 object-fit: cover;
               }
             `}</style>
+            {activeMode === 'spectator' && (
+                <video
+                    ref={spectatorVideoRef}
+                    className="absolute inset-0 w-full h-full object-cover"
+                    playsInline
+                    muted
+                    autoPlay
+                    controls
+                    onLoadedMetadata={e => {
+                      const v = e.currentTarget;
+                      if (v.videoWidth > 0 && v.videoHeight > 0) {
+                        setRenderAspect(`${v.videoWidth} / ${v.videoHeight}`);
+                        setSourceSize({ width: v.videoWidth, height: v.videoHeight });
+                      }
+                    }}
+                />
+            )}
 
-            {activeMode === 'alignment_person' &&
+            {(activeMode === 'alignment_person' || activeMode === 'spectator') &&
                 (rawInfo?.bbox || rawInfo?.centerPoint || rawInfo?.ratio !== undefined || rawInfo?.yaw !== undefined) &&
                 sourceSize &&
                 containerSize && (
@@ -705,7 +950,7 @@ function LivePusher() {
                 </div>
             )}
 
-            {activeMode === 'image_search' &&
+            {(activeMode === 'image_search' || activeMode === 'spectator') &&
                 imageSearchInfo &&
                 sourceSize &&
                 containerSize && (
@@ -935,7 +1180,7 @@ function LivePusher() {
                 </div>
             )}
 
-            {activeMode === 'alignment_person' && taskOffNotice && (
+            {(activeMode === 'alignment_person' || activeMode === 'spectator') && taskOffNotice && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="text-3xl md:text-4xl font-bold text-emerald-400 bg-black/60 px-6 py-3 rounded-xl">
                     算法启动成功，开始识别中
@@ -955,8 +1200,8 @@ function LivePusher() {
             WS：{wsStatus}
             </span>
             {isStreaming && (
-                <span className="flex items-center text-red-500">
-                    <Radio className="w-4 h-4 mr-1" /> 直播中
+                <span className={`flex items-center ${activeMode === 'spectator' ? 'text-emerald-400' : 'text-red-500'}`}>
+                    <Radio className="w-4 h-4 mr-1" /> {activeMode === 'spectator' ? '旁观中' : '直播中'}
                   </span>
             )}
           </div>
@@ -980,18 +1225,20 @@ function LivePusher() {
           </div>
 
           <div className="flex space-x-3 items-center">
-            <select
-                disabled={isStreaming}
-                value={selectedCamera}
-                onChange={e => setSelectedCamera(e.target.value)}
-                className="bg-slate-700 text-white p-3 rounded-xl"
-            >
-              {devices.map((d, i) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {d.label || `摄像头 ${i + 1}`}
-                  </option>
-              ))}
-            </select>
+            {activeMode !== 'spectator' && (
+                <select
+                    disabled={isStreaming}
+                    value={selectedCamera}
+                    onChange={e => setSelectedCamera(e.target.value)}
+                    className="bg-slate-700 text-white p-3 rounded-xl"
+                >
+                  {devices.map((d, i) => (
+                      <option key={d.deviceId} value={d.deviceId}>
+                        {d.label || `摄像头 ${i + 1}`}
+                      </option>
+                  ))}
+                </select>
+            )}
 
             <button
                 onClick={isStreaming ? stopStream : startStream}
@@ -999,7 +1246,9 @@ function LivePusher() {
                     isStreaming ? 'bg-red-500' : 'bg-blue-500'
                 }`}
             >
-              {isStreaming ? '停止推流' : '开始推流'}
+              {isStreaming
+                  ? (activeMode === 'spectator' ? '停止旁观' : '停止推流')
+                  : (activeMode === 'spectator' ? '开始旁观' : '开始推流')}
             </button>
 
           </div>
@@ -1024,6 +1273,14 @@ function LivePusher() {
                   }`}
               >
                 对准-人
+              </button>
+              <button
+                  onClick={() => setActiveMode('spectator')}
+                  className={`px-4 py-2 rounded-xl ${
+                      activeMode === 'spectator' ? 'bg-blue-500' : 'bg-slate-700'
+                  }`}
+              >
+                旁观者
               </button>
             </div>
 
@@ -1110,6 +1367,21 @@ function LivePusher() {
                   {alignmentError && (
                       <div className="text-red-400 text-sm">{alignmentError}</div>
                   )}
+                </div>
+            )}
+
+            {activeMode === 'spectator' && (
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <label className="text-slate-300 text-sm">FLV 流地址</label>
+                    <input
+                        type="text"
+                        value={spectatorFlvUrl}
+                        onChange={e => setSpectatorFlvUrl(e.target.value)}
+                        className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
+                        placeholder="http://localhost:1985/rtc/v1/whep/?app=live&stream=stream.flv"
+                    />
+                  </div>
                 </div>
             )}
           </div>
