@@ -14,6 +14,7 @@ interface DeviceInfo {
 }
 
 function LivePusher() {
+  type AlgoType = 'upload_template' | 'alignment_person';
   const [isStreaming, setIsStreaming] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
@@ -26,6 +27,7 @@ function LivePusher() {
 
   const [wsStatus, setWsStatus] = useState('未连接');
   const [messages, setMessages] = useState<string[]>([]);
+  const [notifyMessage, setNotifyMessage] = useState('');
   const [activeMode, setActiveMode] = useState<'image_search' | 'alignment_person' | 'spectator'>(
       'image_search'
   );
@@ -68,12 +70,32 @@ function LivePusher() {
     };
     targetCenter?: [number, number];
   } | null>(null);
+  const [currentAlgoType, setCurrentAlgoType] = useState<AlgoType | null>(null);
   const [taskOffNotice, setTaskOffNotice] = useState(false);
   const taskOffTimerRef = useRef<number | null>(null);
+  const notifyTimerRef = useRef<number | null>(null);
   const videoWrapRef = useRef<HTMLDivElement | null>(null);
   const spectatorVideoRef = useRef<HTMLVideoElement | null>(null);
   const spectatorFlvPlayerRef = useRef<any>(null);
   const spectatorPcRef = useRef<RTCPeerConnection | null>(null);
+  const currentAlgoTypeRef = useRef<AlgoType | null>(null);
+
+  const showNotify = (text: string) => {
+    if (!text) return;
+    setNotifyMessage(text);
+    if (notifyTimerRef.current) {
+      window.clearTimeout(notifyTimerRef.current);
+    }
+    notifyTimerRef.current = window.setTimeout(() => {
+      setNotifyMessage('');
+    }, 2000);
+  };
+  const currentAlgoLabel =
+      currentAlgoType === 'upload_template'
+          ? '以图搜景'
+          : currentAlgoType === 'alignment_person'
+              ? '对准-人'
+              : '未识别';
 
   const pusherRef = useRef<any>(null);
   const deviceManagerRef = useRef<any>(null);
@@ -155,6 +177,32 @@ function LivePusher() {
 
         try {
           const parsed = JSON.parse(data);
+          if (parsed?.type === 'notify' && typeof parsed?.message === 'string') {
+            showNotify(parsed.message);
+          }
+          const incomingAlgoType: AlgoType | null =
+              parsed?.algoType === 'upload_template' || parsed?.algoType === 'alignment_person'
+                  ? parsed.algoType
+                  : null;
+          if (incomingAlgoType && incomingAlgoType !== currentAlgoTypeRef.current) {
+            // 算法类型切换时，清空上一轮展示
+            setRawInfo(null);
+            setImageSearchInfo(null);
+            setMoveGuide(null);
+            setTaskOffNotice(false);
+          }
+          if (incomingAlgoType) {
+            currentAlgoTypeRef.current = incomingAlgoType;
+            setCurrentAlgoType(incomingAlgoType);
+          }
+          const effectiveAlgoType = incomingAlgoType || currentAlgoTypeRef.current;
+
+          if (parsed?.type === 'alignment_done') {
+            setRawInfo(null);
+            setImageSearchInfo(null);
+            setMoveGuide(null);
+          }
+
           if (parsed?.command === 'task_off') {
             setTaskOffNotice(true);
             if (taskOffTimerRef.current) {
@@ -196,9 +244,10 @@ function LivePusher() {
 
           if (parsed?.raw) {
             if (
+                effectiveAlgoType === 'upload_template' &&
                 typeof parsed.raw?.statusCode === 'number' ||
-                parsed.raw?.targetInfo ||
-                parsed.raw?.targetCenter
+                (effectiveAlgoType === 'upload_template' && parsed.raw?.targetInfo) ||
+                (effectiveAlgoType === 'upload_template' && parsed.raw?.targetCenter)
             ) {
               const targetInfo = parsed.raw?.targetInfo || {};
               const leftTop = targetInfo.leftTop;
@@ -234,39 +283,41 @@ function LivePusher() {
               });
             }
 
-            const nextRaw: {
-              ratio?: number;
-              bbox?: [number, number, number, number];
-              centerPoint?: [number, number];
-              yaw?: number;
-            } = {};
+            if (effectiveAlgoType === 'alignment_person') {
+              const nextRaw: {
+                ratio?: number;
+                bbox?: [number, number, number, number];
+                centerPoint?: [number, number];
+                yaw?: number;
+              } = {};
 
-            if (typeof parsed.raw?.object?.ratio === 'number') {
-              nextRaw.ratio = parsed.raw.object.ratio;
-            }
-            if (parsed.raw?.object?.bbox && Array.isArray(parsed.raw.object.bbox)) {
-              const bbox = parsed.raw.object.bbox;
-              if (bbox.length === 4) {
-                // bbox: [origin_x, origin_y, width, height]
-                nextRaw.bbox = [bbox[0], bbox[1], bbox[2], bbox[3]];
+              if (typeof parsed.raw?.object?.ratio === 'number') {
+                nextRaw.ratio = parsed.raw.object.ratio;
               }
-            }
-            if (
-                parsed.raw?.pose?.center_point &&
-                Array.isArray(parsed.raw.pose.center_point) &&
-                parsed.raw.pose.center_point.length === 2
-            ) {
-              nextRaw.centerPoint = [
-                parsed.raw.pose.center_point[0],
-                parsed.raw.pose.center_point[1]
-              ];
-            }
-            if (typeof parsed.raw?.head?.yaw === 'number') {
-              nextRaw.yaw = parsed.raw.head.yaw;
-            }
+              if (parsed.raw?.object?.bbox && Array.isArray(parsed.raw.object.bbox)) {
+                const bbox = parsed.raw.object.bbox;
+                if (bbox.length === 4) {
+                  // bbox: [origin_x, origin_y, width, height]
+                  nextRaw.bbox = [bbox[0], bbox[1], bbox[2], bbox[3]];
+                }
+              }
+              if (
+                  parsed.raw?.pose?.center_point &&
+                  Array.isArray(parsed.raw.pose.center_point) &&
+                  parsed.raw.pose.center_point.length === 2
+              ) {
+                nextRaw.centerPoint = [
+                  parsed.raw.pose.center_point[0],
+                  parsed.raw.pose.center_point[1]
+                ];
+              }
+              if (typeof parsed.raw?.head?.yaw === 'number') {
+                nextRaw.yaw = parsed.raw.head.yaw;
+              }
 
-            if (Object.keys(nextRaw).length > 0) {
-              setRawInfo(nextRaw);
+              if (Object.keys(nextRaw).length > 0) {
+                setRawInfo(nextRaw);
+              }
             }
           }
           return JSON.stringify(parsed);
@@ -341,6 +392,14 @@ function LivePusher() {
     return () => {
       observer.disconnect();
       detach();
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (notifyTimerRef.current) {
+        window.clearTimeout(notifyTimerRef.current);
+      }
     };
   }, []);
 
@@ -815,8 +874,15 @@ function LivePusher() {
 
   return (
       <div className="p-6 bg-slate-900 min-h-screen">
+        {notifyMessage && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+              <div className="max-w-[80vw] rounded-xl bg-black/75 px-6 py-3 text-lg font-semibold text-white">
+                {notifyMessage}
+              </div>
+            </div>
+        )}
         <div className="max-w-4xl mx-auto space-y-6">
-          <h1 className="text-3xl font-bold text-white">Meya Web</h1>
+          <h1 className="text-3xl font-bold text-white">Meya</h1>
 
           <div
               className="bg-black rounded-xl relative overflow-hidden"
@@ -849,8 +915,13 @@ function LivePusher() {
                     }}
                 />
             )}
+            <div className="absolute left-3 bottom-3 pointer-events-none">
+              <div className="rounded bg-black/60 px-3 py-1 text-xs text-white">
+                当前算法：{currentAlgoLabel}
+              </div>
+            </div>
 
-            {(activeMode === 'alignment_person' || activeMode === 'spectator') &&
+            {(currentAlgoType === 'alignment_person') &&
                 (rawInfo?.bbox || rawInfo?.centerPoint || rawInfo?.ratio !== undefined || rawInfo?.yaw !== undefined) &&
                 sourceSize &&
                 containerSize && (
@@ -950,7 +1021,7 @@ function LivePusher() {
                 </div>
             )}
 
-            {(activeMode === 'image_search' || activeMode === 'spectator') &&
+            {(currentAlgoType === 'upload_template') &&
                 imageSearchInfo &&
                 sourceSize &&
                 containerSize && (

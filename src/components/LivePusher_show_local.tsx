@@ -13,6 +13,7 @@ interface DeviceInfo {
 }
 
 function LivePusher() {
+  type AlgoType = 'upload_template' | 'alignment_person';
   const [isStreaming, setIsStreaming] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
@@ -25,10 +26,30 @@ function LivePusher() {
 
   const [wsStatus, setWsStatus] = useState('未连接');
   const [messages, setMessages] = useState<string[]>([]);
+  const [notifyMessage, setNotifyMessage] = useState('');
+  const [currentAlgoType, setCurrentAlgoType] = useState<AlgoType | null>(null);
 
   const pusherRef = useRef<any>(null);
   const deviceManagerRef = useRef<any>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const notifyTimerRef = useRef<number | null>(null);
+
+  const showNotify = (text: string) => {
+    if (!text) return;
+    setNotifyMessage(text);
+    if (notifyTimerRef.current) {
+      window.clearTimeout(notifyTimerRef.current);
+    }
+    notifyTimerRef.current = window.setTimeout(() => {
+      setNotifyMessage('');
+    }, 2000);
+  };
+  const currentAlgoLabel =
+      currentAlgoType === 'upload_template'
+          ? '以图搜景'
+          : currentAlgoType === 'alignment_person'
+              ? '对准-人'
+              : '未识别';
 
   const WS_SERVER = "wss://www.uiofield.top/meya/ws";
   const WEB_SERVER = "https://www.uiofield.top/meya/push"
@@ -105,6 +126,18 @@ function LivePusher() {
               ? event.data
               : JSON.stringify(event.data);
 
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed?.type === 'notify' && typeof parsed?.message === 'string') {
+          showNotify(parsed.message);
+        }
+        if (parsed?.algoType === 'upload_template' || parsed?.algoType === 'alignment_person') {
+          setCurrentAlgoType(parsed.algoType);
+        }
+      } catch {
+        // ignore non-json payload
+      }
+
       setMessages(prev => [msg, ...prev].slice(0, 10));
     };
 
@@ -122,6 +155,14 @@ function LivePusher() {
         clearInterval(heartbeatRef.current);
       }
       ws.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (notifyTimerRef.current) {
+        window.clearTimeout(notifyTimerRef.current);
+      }
     };
   }, []);
 
@@ -302,15 +343,29 @@ function LivePusher() {
 
   return (
       <div className="p-6 bg-slate-900 min-h-screen">
+        {notifyMessage && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+              <div className="max-w-[80vw] rounded-xl bg-black/75 px-6 py-3 text-lg font-semibold text-white">
+                {notifyMessage}
+              </div>
+            </div>
+        )}
         <div className="max-w-4xl mx-auto space-y-6">
-          <h1 className="text-3xl font-bold text-white">Meya Web</h1>
+          <h1 className="text-3xl font-bold text-white">Meya</h1>
 
-          <video
-              id="videoContainer"
-              className="w-full h-full object-cover"
-              muted
-              playsInline
-          />
+          <div className="relative">
+            <video
+                id="videoContainer"
+                className="w-full h-full object-cover"
+                muted
+                playsInline
+            />
+            <div className="absolute left-3 bottom-3 pointer-events-none">
+              <div className="rounded bg-black/60 px-3 py-1 text-xs text-white">
+                当前算法：{currentAlgoLabel}
+              </div>
+            </div>
+          </div>
 
           <div className="flex items-center justify-between text-white">
             <span>{streamStatus}</span>
