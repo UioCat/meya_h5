@@ -15,6 +15,8 @@ interface DeviceInfo {
 
 function LivePusher() {
   type AlgoType = 'upload_template' | 'alignment_person';
+  const isRearCameraLabel = (label?: string) =>
+      /back|rear|environment|后置|后摄|主摄/i.test(label || '');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
@@ -770,7 +772,7 @@ function LivePusher() {
     if (cameras.length) {
       const backCamera =
           cameras.find(c =>
-              /back|rear|environment|后置|后摄|主摄/i.test(c.label || '')
+              isRearCameraLabel(c.label)
           ) || cameras[0];
       setSelectedCamera(prev => prev || backCamera.deviceId);
     }
@@ -807,15 +809,31 @@ function LivePusher() {
         }
       });
 
-      await pusher.startCamera();
+      const isiOSDevice = /iP(hone|od|ad)/.test(navigator.userAgent);
+      const backCamera =
+          devices.find(c =>
+              isRearCameraLabel(c.label)
+          ) || devices[0];
+      const targetCameraId = selectedCamera || backCamera?.deviceId;
+      const targetCamera = devices.find(c => c.deviceId === targetCameraId);
+      const useRearCamera = targetCamera ? isRearCameraLabel(targetCamera.label) : false;
 
-      const defaultCameraId = devices[0]?.deviceId;
-      if (selectedCamera && selectedCamera !== defaultCameraId) {
-        await pusher.getDeviceManager().switchCamera(selectedCamera);
-        // 切换摄像头后等待 1s 再启动推流，避免黑屏
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      // iOS 上直接按朝向打开摄像头，避免先开前置再切后置导致黑屏
+      if (isiOSDevice) {
+        await pusher.startCamera(useRearCamera ? 'environment' : 'user');
+      } else {
+        await pusher.startCamera();
       }
 
+      const defaultCameraId = devices[0]?.deviceId;
+
+      if (!isiOSDevice && targetCameraId && targetCameraId !== defaultCameraId) {
+        setStreamStatus('切换摄像头中...');
+        await pusher.getDeviceManager().switchCamera(targetCameraId);
+        await new Promise(resolve => setTimeout(resolve, 900));
+      }
+
+      setStreamStatus('推流连接中...');
       await pusher.startPush(PUSH_URL);
 
       setIsStreaming(true);
