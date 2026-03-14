@@ -13,8 +13,68 @@ interface DeviceInfo {
   label: string;
 }
 
+type AlignmentTemplateValue = {
+  person_ratio_percent: number;
+  person_ratio_percent_offset: number;
+  center_position: string;
+  center_position_offset_percent: number;
+  face_center_offset_deg: number;
+};
+
+type AlignmentTemplateItem = {
+  key: string;
+  value: AlignmentTemplateValue;
+  updated_at?: number;
+};
+
+const parseJsonSafely = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+};
+
+const parseAlignmentTemplateValue = (value: unknown): AlignmentTemplateValue | null => {
+  let source = value;
+  if (typeof source === 'string') {
+    source = parseJsonSafely(source);
+  }
+  if (!source || typeof source !== 'object') return null;
+  const obj = source as Record<string, unknown>;
+  const centerPosition = typeof obj.center_position === 'string' ? obj.center_position : '';
+  if (!centerPosition) return null;
+  const toNumber = (v: unknown) => {
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const personRatio = toNumber(obj.person_ratio_percent);
+  const personRatioOffset = toNumber(obj.person_ratio_percent_offset);
+  const centerOffset = toNumber(obj.center_position_offset_percent);
+  const faceOffset = toNumber(obj.face_center_offset_deg);
+  if (
+      personRatio === null ||
+      personRatioOffset === null ||
+      centerOffset === null ||
+      faceOffset === null
+  ) {
+    return null;
+  }
+  return {
+    person_ratio_percent: personRatio,
+    person_ratio_percent_offset: personRatioOffset,
+    center_position: centerPosition,
+    center_position_offset_percent: centerOffset,
+    face_center_offset_deg: faceOffset
+  };
+};
+
 function LivePusher() {
   type AlgoType = 'upload_template' | 'alignment_person';
+  const ALIGNMENT_TEMPLATE_TYPE = 'alignment_person_template';
+  const CONFIG_SERVER_BASE_URL = 'https://www.uiofield.top/config_server';
   const isRearCameraLabel = (label?: string) =>
       /back|rear|environment|后置|后摄|主摄/i.test(label || '');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -29,6 +89,7 @@ function LivePusher() {
 
   const [wsStatus, setWsStatus] = useState('未连接');
   const [messages, setMessages] = useState<string[]>([]);
+  const [isConsoleExpanded, setIsConsoleExpanded] = useState(false);
   const [notifyMessage, setNotifyMessage] = useState('');
   const [activeMode, setActiveMode] = useState<'image_search' | 'alignment_person' | 'spectator'>(
       'image_search'
@@ -39,11 +100,11 @@ function LivePusher() {
   const [spectatorHasAudio, setSpectatorHasAudio] = useState(true);
   const [spectatorHasVideo, setSpectatorHasVideo] = useState(true);
   const [spectatorLogs, setSpectatorLogs] = useState<string[]>([]);
-  const [personRatioPercent, setPersonRatioPercent] = useState(30);
-  const [personRatioPercentOffset, setPersonRatioPercentOffset] = useState(5);
   const [personCenterPosition, setPersonCenterPosition] = useState('眼睛');
   const [personCenterPositionOffsetPercent, setPersonCenterPositionOffsetPercent] = useState(3);
-  const [faceCenterOffsetDeg, setFaceCenterOffsetDeg] = useState(3);
+  const [alignmentTemplates, setAlignmentTemplates] = useState<AlignmentTemplateItem[]>([]);
+  const [selectedAlignmentTemplateKey, setSelectedAlignmentTemplateKey] = useState('');
+  const [alignmentTemplateLoading, setAlignmentTemplateLoading] = useState(false);
   const [alignmentError, setAlignmentError] = useState('');
   const [moveGuide, setMoveGuide] = useState<{
     pitch?: number;
@@ -92,6 +153,8 @@ function LivePusher() {
       setNotifyMessage('');
     }, 2000);
   };
+  const selectedAlignmentTemplate =
+      alignmentTemplates.find(item => item.key === selectedAlignmentTemplateKey) || null;
   const currentAlgoLabel =
       currentAlgoType === 'upload_template'
           ? '以图搜景'
@@ -405,6 +468,56 @@ function LivePusher() {
     };
   }, []);
 
+  const loadAlignmentTemplates = async () => {
+    setAlignmentTemplateLoading(true);
+    setAlignmentError('');
+    try {
+      const resp = await fetch(
+          `${CONFIG_SERVER_BASE_URL}/kvs?type=${encodeURIComponent(ALIGNMENT_TEMPLATE_TYPE)}`
+      );
+      const text = await resp.text();
+      const data = parseJsonSafely(text) as { items?: Array<{ key?: string; value?: unknown; updated_at?: number }> } | null;
+      if (!resp.ok) {
+        if (resp.status === 404) {
+          setAlignmentTemplates([]);
+          setSelectedAlignmentTemplateKey('');
+          return;
+        }
+        throw new Error(`获取模版失败（HTTP ${resp.status}）`);
+      }
+      const parsedItems: AlignmentTemplateItem[] = [];
+      if (Array.isArray(data?.items)) {
+        data.items.forEach(item => {
+          const key = typeof item.key === 'string' ? item.key : '';
+          const parsedValue = parseAlignmentTemplateValue(item.value);
+          if (!key || !parsedValue) return;
+          parsedItems.push({
+            key,
+            value: parsedValue,
+            updated_at: item.updated_at
+          });
+        });
+      }
+      parsedItems.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+      setAlignmentTemplates(parsedItems);
+      setSelectedAlignmentTemplateKey(prev =>
+          parsedItems.some(item => item.key === prev)
+              ? prev
+              : parsedItems[0]?.key || ''
+      );
+    } catch (err: any) {
+      setAlignmentError(err.message || '获取模版失败');
+    } finally {
+      setAlignmentTemplateLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeMode === 'alignment_person') {
+      void loadAlignmentTemplates();
+    }
+  }, [activeMode]);
+
   useEffect(() => {
     const el = videoWrapRef.current;
     if (!el) return;
@@ -699,6 +812,13 @@ function LivePusher() {
     setMoveGuide(null);
     setTaskOffNotice(false);
     try {
+      if (!selectedAlignmentTemplate) {
+        throw new Error('请先选择模版');
+      }
+      const selectedTemplate = selectedAlignmentTemplate.value;
+      setPersonCenterPosition(selectedTemplate.center_position);
+      setPersonCenterPositionOffsetPercent(selectedTemplate.center_position_offset_percent);
+
       await fetch(WEB_SERVER, {
         method: 'POST',
         headers: {
@@ -706,16 +826,16 @@ function LivePusher() {
         },
         body: JSON.stringify({
           type: 'alignment_person',
-          person_ratio_percent: personRatioPercent,
-          person_ratio_percent_offset: personRatioPercentOffset,
-          center_position: personCenterPosition,
-          center_position_offset_percent: personCenterPositionOffsetPercent,
-          face_center_offset_deg: faceCenterOffsetDeg
+          person_ratio_percent: selectedTemplate.person_ratio_percent,
+          person_ratio_percent_offset: selectedTemplate.person_ratio_percent_offset,
+          center_position: selectedTemplate.center_position,
+          center_position_offset_percent: selectedTemplate.center_position_offset_percent,
+          face_center_offset_deg: selectedTemplate.face_center_offset_deg
         })
       });
     } catch (err) {
       console.error('提交对准-人失败', err);
-      setAlignmentError('提交失败');
+      setAlignmentError((err as Error).message || '提交失败');
     }
   };
 
@@ -1278,8 +1398,8 @@ function LivePusher() {
             )}
           </div>
 
-            <div className="flex items-center justify-between text-white">
-            <span>{streamStatus}</span>
+          <div className="flex items-center justify-between text-white">
+            <span>{!isStreaming && streamStatus === '未连接' ? '' : streamStatus}</span>
 
             <span
                 className={`text-sm ${
@@ -1295,22 +1415,32 @@ function LivePusher() {
             )}
           </div>
           <div className="bg-slate-800 rounded-xl p-4 text-white">
-            <div className="text-slate-300 mb-2">指令控制台</div>
-
-            <div className="max-h-48 overflow-y-auto space-y-1 text-sm">
-              {messages.length === 0 && (
-                  <div className="text-slate-500">暂无消息</div>
-              )}
-
-              {messages.map((msg, idx) => (
-                  <div
-                      key={idx}
-                      className="bg-slate-700 rounded px-2 py-1 break-all"
-                  >
-                    {msg}
-                  </div>
-              ))}
+            <div className="flex items-center justify-between">
+              <div className="text-slate-300">指令控制台</div>
+              <button
+                  onClick={() => setIsConsoleExpanded(prev => !prev)}
+                  className="text-xs px-2 py-1 rounded bg-slate-700 text-slate-200"
+              >
+                {isConsoleExpanded ? '收起' : '展开'}
+              </button>
             </div>
+
+            {isConsoleExpanded && (
+                <div className="max-h-48 overflow-y-auto space-y-1 text-sm mt-2">
+                  {messages.length === 0 && (
+                      <div className="text-slate-500">暂无消息</div>
+                  )}
+
+                  {messages.map((msg, idx) => (
+                      <div
+                          key={idx}
+                          className="bg-slate-700 rounded px-2 py-1 break-all"
+                      >
+                        {msg}
+                      </div>
+                  ))}
+                </div>
+            )}
           </div>
 
           <div className="flex space-x-3 items-center">
@@ -1387,68 +1517,49 @@ function LivePusher() {
             {activeMode === 'alignment_person' && (
                 <div className="mt-4 space-y-3">
                   <div>
-                    <label className="text-slate-300 text-sm">人体占比百分比</label>
-                    <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step={1}
-                        value={personRatioPercent}
-                        onChange={e => setPersonRatioPercent(Number(e.target.value))}
-                        className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-slate-300 text-sm">人体占比百分比偏差</label>
-                    <input
-                        type="number"
-                        step={1}
-                        value={personRatioPercentOffset}
-                        onChange={e => setPersonRatioPercentOffset(Number(e.target.value))}
-                        className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-slate-300 text-sm">居中位置</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-slate-300 text-sm">选择模版</label>
+                      <button
+                          onClick={() => void loadAlignmentTemplates()}
+                          disabled={alignmentTemplateLoading}
+                          className={`px-2 py-1 text-xs rounded ${
+                              alignmentTemplateLoading ? 'bg-slate-700' : 'bg-slate-600'
+                          }`}
+                      >
+                        刷新
+                      </button>
+                    </div>
                     <select
-                        value={personCenterPosition}
-                        onChange={e => setPersonCenterPosition(e.target.value)}
+                        value={selectedAlignmentTemplateKey}
+                        onChange={e => setSelectedAlignmentTemplateKey(e.target.value)}
                         className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
                     >
-                      <option value="眼睛">眼睛</option>
-                      <option value="肩膀">肩膀</option>
-                      <option value="髋部">髋部</option>
-                      <option value="膝盖">膝盖</option>
+                      <option value="">请选择模版</option>
+                      {alignmentTemplates.map(item => (
+                          <option key={item.key} value={item.key}>
+                            {item.key}
+                          </option>
+                      ))}
                     </select>
-                  </div>
-
-                  <div>
-                    <label className="text-slate-300 text-sm">居中位置偏差百分比</label>
-                    <input
-                        type="number"
-                        step={1}
-                        value={personCenterPositionOffsetPercent}
-                        onChange={e => setPersonCenterPositionOffsetPercent(Number(e.target.value))}
-                        className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-slate-300 text-sm">人脸居中偏差度数</label>
-                    <input
-                        type="number"
-                        step={1}
-                        value={faceCenterOffsetDeg}
-                        onChange={e => setFaceCenterOffsetDeg(Number(e.target.value))}
-                        className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
-                    />
+                    {selectedAlignmentTemplate && (
+                        <div className="mt-2 text-xs text-slate-300 space-y-1">
+                          <div>人体占比百分比：{selectedAlignmentTemplate.value.person_ratio_percent}</div>
+                          <div>人体占比百分比偏差：{selectedAlignmentTemplate.value.person_ratio_percent_offset}</div>
+                          <div>居中位置：{selectedAlignmentTemplate.value.center_position}</div>
+                          <div>居中位置偏差百分比：{selectedAlignmentTemplate.value.center_position_offset_percent}</div>
+                          <div>人脸居中偏差度数：{selectedAlignmentTemplate.value.face_center_offset_deg}</div>
+                        </div>
+                    )}
                   </div>
 
                   <button
                       onClick={handleSubmitAlignmentPerson}
-                      className="w-full py-2 rounded-xl bg-emerald-500 text-white"
+                      disabled={!selectedAlignmentTemplateKey || alignmentTemplateLoading}
+                      className={`w-full py-2 rounded-xl text-white ${
+                          !selectedAlignmentTemplateKey || alignmentTemplateLoading
+                              ? 'bg-slate-600'
+                              : 'bg-emerald-500'
+                      }`}
                   >
                     提交
                   </button>

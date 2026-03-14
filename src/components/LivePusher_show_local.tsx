@@ -368,7 +368,7 @@ function LivePusher() {
           </div>
 
           <div className="flex items-center justify-between text-white">
-            <span>{streamStatus}</span>
+            <span>{!isStreaming && streamStatus === '未连接' ? '' : streamStatus}</span>
 
             <span
                 className={`text-sm ${
