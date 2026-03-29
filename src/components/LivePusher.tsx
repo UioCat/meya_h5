@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Video, VideoOff, Radio } from 'lucide-react';
+import { Camera, ChevronUp, ChevronDown, Radio, Video, VideoOff } from 'lucide-react';
+import { intentTemplateOptions, normalizeOptionValue, stripOptionCode } from '../shared/intentTemplateOptions';
 
 declare global {
   interface Window {
@@ -14,11 +15,13 @@ interface DeviceInfo {
 }
 
 type AlignmentTemplateValue = {
-  person_ratio_percent: number;
-  person_ratio_percent_offset: number;
-  center_position: string;
-  center_position_offset_percent: number;
-  face_center_offset_deg: number;
+  bodyRange: string;
+  shotType: string;
+  orientation: string;
+  compositionMethod: string;
+  cameraHeight: string;
+  eyeStatus: string;
+  mouthStatus: string;
 };
 
 type AlignmentTemplateItem = {
@@ -37,6 +40,13 @@ const parseJsonSafely = (text: string) => {
   }
 };
 
+type ShotRatioConfigItem = {
+  scene: string;
+  range: string;
+  ratioMin: string;
+  ratioMax: string;
+};
+
 const parseAlignmentTemplateValue = (value: unknown): AlignmentTemplateValue | null => {
   let source = value;
   if (typeof source === 'string') {
@@ -44,36 +54,102 @@ const parseAlignmentTemplateValue = (value: unknown): AlignmentTemplateValue | n
   }
   if (!source || typeof source !== 'object') return null;
   const obj = source as Record<string, unknown>;
-  const centerPosition = typeof obj.center_position === 'string' ? obj.center_position : '';
-  if (!centerPosition) return null;
-  const toNumber = (v: unknown) => {
-    const n = typeof v === 'number' ? v : Number(v);
-    return Number.isFinite(n) ? n : null;
+
+  const fieldMap: Record<keyof AlignmentTemplateValue, string[]> = {
+    bodyRange: ['bodyRange', 'body_range'],
+    shotType: ['shotType', 'shot_type'],
+    orientation: ['orientation'],
+    compositionMethod: ['compositionMethod', 'composition_method'],
+    cameraHeight: ['cameraHeight', 'camera_height'],
+    eyeStatus: ['eyeStatus', 'eye_status'],
+    mouthStatus: ['mouthStatus', 'mouth_status']
   };
-  const personRatio = toNumber(obj.person_ratio_percent);
-  const personRatioOffset = toNumber(obj.person_ratio_percent_offset);
-  const centerOffset = toNumber(obj.center_position_offset_percent);
-  const faceOffset = toNumber(obj.face_center_offset_deg);
-  if (
-      personRatio === null ||
-      personRatioOffset === null ||
-      centerOffset === null ||
-      faceOffset === null
-  ) {
-    return null;
+
+  const next = {} as AlignmentTemplateValue;
+  for (const key of Object.keys(fieldMap) as Array<keyof AlignmentTemplateValue>) {
+    const rawValue = fieldMap[key]
+      .map(alias => obj[alias])
+      .find(value => typeof value === 'string');
+    if (typeof rawValue !== 'string') {
+      if (key === 'cameraHeight') {
+        next[key] = intentTemplateOptions.cameraHeight[0] ?? '';
+        continue;
+      }
+      return null;
+    }
+    next[key] = normalizeOptionValue(rawValue);
   }
-  return {
-    person_ratio_percent: personRatio,
-    person_ratio_percent_offset: personRatioOffset,
-    center_position: centerPosition,
-    center_position_offset_percent: centerOffset,
-    face_center_offset_deg: faceOffset
-  };
+  return next;
+};
+
+const parseShotRatioConfig = (value: unknown): ShotRatioConfigItem[] => {
+  let source = value;
+  if (typeof source === 'string') {
+    source = parseJsonSafely(source);
+  }
+
+  const items: ShotRatioConfigItem[] = [];
+  if (!Array.isArray(source)) {
+    return items;
+  }
+
+  source.forEach(item => {
+    if (!item || typeof item !== 'object') return;
+    const entry = item as Record<string, unknown>;
+
+    if (
+      (typeof entry.scene === 'string' || typeof entry.scene === 'number') &&
+      (typeof entry.range === 'string' || typeof entry.range === 'number')
+    ) {
+      items.push({
+        scene: normalizeOptionValue(String(entry.scene)),
+        range: normalizeOptionValue(String(entry.range)),
+        ratioMin:
+          typeof entry.ratioMin === 'number' || typeof entry.ratioMin === 'string'
+            ? String(entry.ratioMin)
+            : '',
+        ratioMax:
+          typeof entry.ratioMax === 'number' || typeof entry.ratioMax === 'string'
+            ? String(entry.ratioMax)
+            : ''
+      });
+      return;
+    }
+
+    const [sceneName, configValue] = Object.entries(entry)[0] || [];
+    if (!sceneName || !configValue || typeof configValue !== 'object') return;
+    const configObj = configValue as Record<string, unknown>;
+    items.push({
+      scene: normalizeOptionValue(sceneName),
+      range:
+        typeof configObj.range === 'string'
+          ? normalizeOptionValue(configObj.range)
+          : typeof configObj['范围'] === 'string'
+            ? normalizeOptionValue(configObj['范围'])
+            : '',
+      ratioMin:
+        typeof configObj.ratioMin === 'number' || typeof configObj.ratioMin === 'string'
+          ? String(configObj.ratioMin)
+          : typeof configObj['比例min'] === 'number' || typeof configObj['比例min'] === 'string'
+            ? String(configObj['比例min'])
+            : '',
+      ratioMax:
+        typeof configObj.ratioMax === 'number' || typeof configObj.ratioMax === 'string'
+          ? String(configObj.ratioMax)
+          : typeof configObj['比例max'] === 'number' || typeof configObj['比例max'] === 'string'
+            ? String(configObj['比例max'])
+            : ''
+    });
+  });
+
+  return items.filter(item => item.scene && item.range && item.ratioMin && item.ratioMax);
 };
 
 function LivePusher() {
   type AlgoType = 'upload_template' | 'alignment_person';
-  const ALIGNMENT_TEMPLATE_TYPE = 'alignment_person_template';
+  const ALIGNMENT_TEMPLATE_TYPE = 'intent_template';
+  const SHOT_RATIO_CONFIG_TYPE = 'basic_config';
+  const SHOT_RATIO_CONFIG_KEY = 'shot_subject_ratio_table';
   const CONFIG_SERVER_BASE_URL = 'https://www.uiofield.top/config_server';
   const isRearCameraLabel = (label?: string) =>
       /back|rear|environment|后置|后摄|主摄/i.test(label || '');
@@ -89,7 +165,8 @@ function LivePusher() {
 
   const [wsStatus, setWsStatus] = useState('未连接');
   const [messages, setMessages] = useState<string[]>([]);
-  const [isConsoleExpanded, setIsConsoleExpanded] = useState(false);
+  const [isConsoleExpanded, setIsConsoleExpanded] = useState(true);
+  const [isAnalysisPanelExpanded, setIsAnalysisPanelExpanded] = useState(true);
   const [notifyMessage, setNotifyMessage] = useState('');
   const [activeMode, setActiveMode] = useState<'image_search' | 'alignment_person' | 'spectator'>(
       'image_search'
@@ -512,6 +589,21 @@ function LivePusher() {
     }
   };
 
+  const loadShotRatioConfigs = async () => {
+    const resp = await fetch(
+      `${CONFIG_SERVER_BASE_URL}/kv?type=${encodeURIComponent(SHOT_RATIO_CONFIG_TYPE)}&key=${encodeURIComponent(SHOT_RATIO_CONFIG_KEY)}`
+    );
+    const text = await resp.text();
+    const data = parseJsonSafely(text) as { value?: unknown; error?: string } | null;
+    if (!resp.ok) {
+      if (resp.status === 404) {
+        return [] as ShotRatioConfigItem[];
+      }
+      throw new Error((data && typeof data.error === 'string' && data.error) || `获取景别与主体占比失败（HTTP ${resp.status}）`);
+    }
+    return parseShotRatioConfig(data?.value);
+  };
+
   useEffect(() => {
     if (activeMode === 'alignment_person') {
       void loadAlignmentTemplates();
@@ -805,6 +897,120 @@ function LivePusher() {
     fileInputRef.current?.click();
   };
 
+  const saveBlobWithDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const saveCapturedPhoto = async (blob: Blob, filename: string) => {
+    const ua = navigator.userAgent;
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+    const isMacDesktop = /Macintosh|Mac OS X/i.test(ua) && !/iPhone|iPad|iPod/i.test(ua);
+    const isAbortError = (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err || '');
+      const name = err && typeof err === 'object' && 'name' in err ? String((err as { name?: unknown }).name || '') : '';
+      return name === 'AbortError' || /user aborted a request/i.test(message);
+    };
+
+    if (isMobile) {
+      const shareFile = new File([blob], filename, { type: 'image/jpeg' });
+      if (navigator.canShare?.({ files: [shareFile] }) && navigator.share) {
+        try {
+          await navigator.share({
+            files: [shareFile],
+            title: '保存照片'
+          });
+        } catch (err) {
+          if (isAbortError(err)) return '';
+          throw err;
+        }
+        return '已打开系统分享面板，请保存到相册';
+      }
+      saveBlobWithDownload(blob, filename);
+      return '当前浏览器不支持直接写入相册，已触发下载';
+    }
+
+    const showSaveFilePicker = (window as any).showSaveFilePicker as
+        | ((options?: Record<string, unknown>) => Promise<any>)
+        | undefined;
+    if (isMacDesktop && showSaveFilePicker) {
+      let handle;
+      try {
+        handle = await showSaveFilePicker({
+          suggestedName: filename,
+          types: [
+            {
+              description: 'JPEG Image',
+              accept: { 'image/jpeg': ['.jpg', '.jpeg'] }
+            }
+          ]
+        });
+      } catch (err) {
+        if (isAbortError(err)) return '';
+        throw err;
+      }
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return '照片已保存';
+    }
+
+    saveBlobWithDownload(blob, filename);
+    return '已触发下载保存';
+  };
+
+  const handleCapturePhoto = async () => {
+    try {
+      const container = document.getElementById('videoContainer');
+      const video = container?.querySelector('video') as HTMLVideoElement | null;
+      const canvasEl = container?.querySelector('canvas') as HTMLCanvasElement | null;
+      const sourceWidth = video?.videoWidth || canvasEl?.width || 0;
+      const sourceHeight = video?.videoHeight || canvasEl?.height || 0;
+
+      if (!sourceWidth || !sourceHeight) {
+        throw new Error('当前还没有可拍摄的画面');
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = sourceWidth;
+      canvas.height = sourceHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Canvas 不支持');
+      }
+
+      if (video) {
+        ctx.drawImage(video, 0, 0, sourceWidth, sourceHeight);
+      } else if (canvasEl) {
+        ctx.drawImage(canvasEl, 0, 0, sourceWidth, sourceHeight);
+      }
+
+      const filename = `capture-${Date.now()}.jpg`;
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(nextBlob => {
+          if (!nextBlob) {
+            reject(new Error('生成照片失败'));
+            return;
+          }
+          resolve(nextBlob);
+        }, 'image/jpeg', 0.7);
+      });
+      const saveMessage = await saveCapturedPhoto(blob, filename);
+      if (saveMessage) {
+        showNotify(saveMessage);
+      }
+    } catch (err) {
+      console.error('拍照失败', err);
+      showNotify((err as Error).message || '拍照失败');
+    }
+  };
+
   const handleSubmitAlignmentPerson = async () => {
     setAlignmentError('');
     // 重新提交任务时清空画面提示
@@ -815,9 +1021,28 @@ function LivePusher() {
       if (!selectedAlignmentTemplate) {
         throw new Error('请先选择模版');
       }
+
       const selectedTemplate = selectedAlignmentTemplate.value;
-      setPersonCenterPosition(selectedTemplate.center_position);
-      setPersonCenterPositionOffsetPercent(selectedTemplate.center_position_offset_percent);
+      const shotRatioConfigs = await loadShotRatioConfigs();
+      const matchedShotRatio = shotRatioConfigs.find(item => {
+        const normalizedScene = normalizeOptionValue(item.scene);
+        const selectedShotType = normalizeOptionValue(selectedTemplate.shotType);
+        return (
+          normalizedScene === selectedShotType ||
+          stripOptionCode(normalizedScene) === stripOptionCode(selectedShotType)
+        );
+      });
+
+      if (!matchedShotRatio) {
+        throw new Error(`未找到景别类型 ${selectedTemplate.shotType} 对应的景别与主体占比配置`);
+      }
+
+      const concreteRange = stripOptionCode(matchedShotRatio.range || selectedTemplate.bodyRange);
+      const concreteOrientation = stripOptionCode(selectedTemplate.orientation);
+      const concreteCompositionMethod = stripOptionCode(selectedTemplate.compositionMethod);
+
+      setPersonCenterPosition(concreteRange || stripOptionCode(selectedTemplate.bodyRange));
+      setPersonCenterPositionOffsetPercent(3);
 
       await fetch(WEB_SERVER, {
         method: 'POST',
@@ -826,11 +1051,13 @@ function LivePusher() {
         },
         body: JSON.stringify({
           type: 'alignment_person',
-          person_ratio_percent: selectedTemplate.person_ratio_percent,
-          person_ratio_percent_offset: selectedTemplate.person_ratio_percent_offset,
-          center_position: selectedTemplate.center_position,
-          center_position_offset_percent: selectedTemplate.center_position_offset_percent,
-          face_center_offset_deg: selectedTemplate.face_center_offset_deg
+          range: concreteRange,
+          ratioMin: matchedShotRatio.ratioMin,
+          ratioMax: matchedShotRatio.ratioMax,
+          orientation: concreteOrientation,
+          compositionMethod: concreteCompositionMethod,
+          eyeStatus: selectedTemplate.eyeStatus,
+          mouthStatus: selectedTemplate.mouthStatus
         })
       });
     } catch (err) {
@@ -919,7 +1146,10 @@ function LivePusher() {
 
       pusher.setRenderView('videoContainer');
       pusher.videoView.muted = true;
-
+      // const param = {
+      //   videoResolutionMode: V2TXLiveVideoResolutionMode.v2TXLiveVideoResolutionModePortrait
+      // };
+      // pusher.setVideoQuality(param);
       pusher.setVideoQuality('480p');
       pusher.setProperty('setVideoFPS', 25);
 
@@ -1011,7 +1241,7 @@ function LivePusher() {
 
 
   return (
-      <div className="p-6 bg-slate-900 min-h-screen">
+      <div className="min-h-screen bg-slate-900 px-4 pb-32 pt-4 sm:px-6 lg:pb-40 lg:pt-6">
         {notifyMessage && (
             <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
               <div className="max-w-[80vw] rounded-xl bg-black/75 px-6 py-3 text-lg font-semibold text-white">
@@ -1023,8 +1253,10 @@ function LivePusher() {
           <h1 className="text-3xl font-bold text-white">Meya</h1>
 
           <div
-              className="bg-black rounded-xl relative overflow-hidden"
-              style={{ aspectRatio: renderAspect || '16 / 9' }}
+              className={`bg-black rounded-xl relative overflow-hidden ${
+                renderAspect ? '' : 'min-h-[240px] sm:min-h-[320px] lg:min-h-[420px]'
+              }`}
+              style={renderAspect ? { aspectRatio: renderAspect } : undefined}
               ref={videoWrapRef}
           >
             <div id="videoContainer" className="w-full h-full" />
@@ -1059,32 +1291,74 @@ function LivePusher() {
               </div>
             </div>
 
+            {((currentAlgoType === 'alignment_person' &&
+                (rawInfo?.bbox || rawInfo?.centerPoint || rawInfo?.ratio !== undefined || rawInfo?.yaw !== undefined)) ||
+                (currentAlgoType === 'upload_template' && imageSearchInfo)) && (
+                <div className="absolute right-3 top-3 z-20 max-w-[min(78vw,320px)] text-xs text-white">
+                  <div className="rounded-xl bg-black/60 backdrop-blur-md shadow-[0_8px_24px_rgba(15,23,42,0.28)]">
+                    <button
+                        type="button"
+                        onClick={() => setIsAnalysisPanelExpanded(prev => !prev)}
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+                    >
+                      <span className="font-medium">分析结果和画面说明</span>
+                      {isAnalysisPanelExpanded ? (
+                          <ChevronUp className="h-4 w-4 shrink-0" />
+                      ) : (
+                          <ChevronDown className="h-4 w-4 shrink-0" />
+                      )}
+                    </button>
+                    {isAnalysisPanelExpanded && (
+                        <div className="space-y-2 border-t border-white/10 px-3 pb-3 pt-2">
+                          {currentAlgoType === 'alignment_person' && (
+                              <>
+                                <div className="rounded bg-black/35 px-2 py-1">
+                                  人体占比：
+                                  {rawInfo?.ratio !== undefined
+                                      ? `${(rawInfo.ratio * 100).toFixed(2)}%`
+                                      : '--'}
+                                  <span className="ml-2">
+                                    人脸相对镜头偏移角度：
+                                    {rawInfo?.yaw !== undefined
+                                        ? `${rawInfo.yaw.toFixed(2)}°`
+                                        : '--'}
+                                  </span>
+                                </div>
+                                <div className="rounded bg-black/35 px-2 py-1 space-y-1">
+                                  <div className="font-medium">画面说明</div>
+                                  <div>绿色点：人像-{personCenterPosition}的中心点</div>
+                                  <div>红色点 + 红色圆：画面中心与居中偏差范围（{personCenterPositionOffsetPercent}%）</div>
+                                </div>
+                              </>
+                          )}
+                          {currentAlgoType === 'upload_template' && imageSearchInfo && (
+                              <div className="rounded bg-black/35 px-2 py-1 space-y-1">
+                                <div>
+                                  定位状态：
+                                  {imageSearchInfo.statusCode === 201
+                                      ? '发现目标'
+                                      : imageSearchInfo.statusCode === 202
+                                          ? '定位成功'
+                                          : imageSearchInfo.statusCode === 203
+                                              ? '未发现目标'
+                                              : '--'}
+                                </div>
+                                <div>状态码：{imageSearchInfo.statusCode ?? '--'}</div>
+                                <div>匹配点：{imageSearchInfo.matchedPoints ?? '--'}</div>
+                                {imageSearchInfo.statusMessage && <div>说明：{imageSearchInfo.statusMessage}</div>}
+                              </div>
+                          )}
+                        </div>
+                    )}
+                  </div>
+                </div>
+            )}
+
             {(currentAlgoType === 'alignment_person') &&
                 (rawInfo?.bbox || rawInfo?.centerPoint || rawInfo?.ratio !== undefined || rawInfo?.yaw !== undefined) &&
                 sourceSize &&
                 containerSize && (
                 <div className="absolute inset-0 pointer-events-none">
-                  <div className="absolute left-3 top-3 text-xs text-white space-y-2">
-                    <div className="bg-black/60 px-2 py-1 rounded">
-                      人体占比：
-                      {rawInfo.ratio !== undefined
-                          ? `${(rawInfo.ratio * 100).toFixed(2)}%`
-                          : '--'}
-                      <span className="ml-2">
-                        人脸相对镜头偏移角度：
-                        {rawInfo.yaw !== undefined
-                            ? `${rawInfo.yaw.toFixed(2)}°`
-                            : '--'}
-                      </span>
-                    </div>
-                    <div className="bg-black/60 px-2 py-1 rounded space-y-1">
-                      <div>画面说明</div>
-                      <div>绿色点：人像-{personCenterPosition}的中心点</div>
-                      <div>
-                        红色点 + 红色圆：画面中心与居中偏差范围（{personCenterPositionOffsetPercent}%）
-                      </div>
-                    </div>
-                  </div>
                   {(() => {
                     const scaleX = containerSize.width / sourceSize.width;
                     const scaleY = containerSize.height / sourceSize.height;
@@ -1164,20 +1438,6 @@ function LivePusher() {
                 sourceSize &&
                 containerSize && (
                 <div className="absolute inset-0 pointer-events-none">
-                  <div className="absolute left-3 top-3 text-xs text-white">
-                    <div className="bg-black/60 px-2 py-1 rounded">
-                      定位状态：
-                      {imageSearchInfo.statusCode === 201
-                          ? '发现目标'
-                          : imageSearchInfo.statusCode === 202
-                              ? '定位成功'
-                              : imageSearchInfo.statusCode === 203
-                                  ? '未发现目标'
-                                  : '--'}
-                      <span className="ml-2">状态码：{imageSearchInfo.statusCode ?? '--'}</span>
-                      <span className="ml-2">匹配点：{imageSearchInfo.matchedPoints ?? '--'}</span>
-                    </div>
-                  </div>
                   {imageSearchInfo.quad && (() => {
                     const scaleX = containerSize.width / sourceSize.width;
                     const scaleY = containerSize.height / sourceSize.height;
@@ -1243,10 +1503,10 @@ function LivePusher() {
                 </div>
             )}
 
-            {moveGuide && (
+ d           {moveGuide && (
                 <div className="absolute inset-0 pointer-events-none text-white">
                   {moveGuide.pitch !== undefined && moveGuide.pitch !== 0 && (
-                      <div className="absolute left-1/2 -translate-x-1/2 top-4 flex flex-col items-center">
+                      <div className="absolute bottom-[30%] left-1/2 -translate-x-1/2 flex flex-col items-center">
                         <div className="text-sm bg-black/60 px-3 py-1 rounded">
                           {moveGuide.pitch > 0 ? '向前' : '向后'}
                         </div>
@@ -1279,7 +1539,7 @@ function LivePusher() {
                   {moveGuide.roll !== undefined && moveGuide.roll !== 0 && (
                       <>
                         {moveGuide.roll < 0 && (
-                            <div className="absolute top-1/2 -translate-y-1/2 left-6 flex items-center gap-2 text-emerald-400">
+                            <div className="absolute bottom-[24%] left-6 flex items-center gap-2 text-emerald-400">
                               <svg
                                   className="w-12 h-12"
                                   viewBox="0 0 1137 1024"
@@ -1294,7 +1554,7 @@ function LivePusher() {
                             </div>
                         )}
                         {moveGuide.roll > 0 && (
-                            <div className="absolute top-1/2 -translate-y-1/2 right-6 flex items-center gap-2 text-emerald-400">
+                            <div className="absolute bottom-[24%] right-6 flex items-center gap-2 text-emerald-400">
                               <div className="text-base bg-black/60 px-2 py-1 rounded text-white">向右</div>
                               <svg
                                   className="w-12 h-12"
@@ -1316,7 +1576,7 @@ function LivePusher() {
                   )}
 
                   {moveGuide.yaw !== undefined && moveGuide.yaw !== 0 && (
-                      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2">
+                      <div className="absolute bottom-[16%] left-1/2 -translate-x-1/2 flex items-center gap-2">
                         <div className="text-sm bg-black/60 px-3 py-1 rounded flex items-center gap-2">
                           {moveGuide.yaw > 0 ? (
                               <svg
@@ -1357,7 +1617,7 @@ function LivePusher() {
                   )}
 
                   {moveGuide.throttle !== undefined && moveGuide.throttle !== 0 && (
-                      <div className="absolute right-4 top-4 flex flex-col items-center">
+                      <div className="absolute bottom-[24%] right-4 flex flex-col items-center">
                         <div className="text-sm bg-black/60 px-3 py-1 rounded mb-2">
                           {moveGuide.throttle > 0 ? '向上' : '向下'}
                         </div>
@@ -1396,6 +1656,14 @@ function LivePusher() {
                   </div>
                 </div>
             )}
+
+            <button
+                type="button"
+                onClick={handleCapturePhoto}
+                className="absolute bottom-3 right-3 z-20 flex h-7 w-7 items-center justify-center rounded-full border border-white/70 bg-white/25 text-white shadow-[0_8px_18px_rgba(15,23,42,0.22)] backdrop-blur-md transition hover:bg-white/35"
+            >
+              <Camera className="h-3.5 w-3.5" />
+            </button>
           </div>
 
           <div className="flex items-center justify-between text-white">
@@ -1543,11 +1811,13 @@ function LivePusher() {
                     </select>
                     {selectedAlignmentTemplate && (
                         <div className="mt-2 text-xs text-slate-300 space-y-1">
-                          <div>人体占比百分比：{selectedAlignmentTemplate.value.person_ratio_percent}</div>
-                          <div>人体占比百分比偏差：{selectedAlignmentTemplate.value.person_ratio_percent_offset}</div>
-                          <div>居中位置：{selectedAlignmentTemplate.value.center_position}</div>
-                          <div>居中位置偏差百分比：{selectedAlignmentTemplate.value.center_position_offset_percent}</div>
-                          <div>人脸居中偏差度数：{selectedAlignmentTemplate.value.face_center_offset_deg}</div>
+                          <div>身体范围（A）：{selectedAlignmentTemplate.value.bodyRange}</div>
+                          <div>景别类型（B）：{selectedAlignmentTemplate.value.shotType}</div>
+                          <div>方位角（C）：{selectedAlignmentTemplate.value.orientation}</div>
+                          <div>构图方法（D）：{selectedAlignmentTemplate.value.compositionMethod}</div>
+                          <div>机位高度（E）：{selectedAlignmentTemplate.value.cameraHeight}</div>
+                          <div>眼睛状态：{selectedAlignmentTemplate.value.eyeStatus}</div>
+                          <div>嘴巴状态：{selectedAlignmentTemplate.value.mouthStatus}</div>
                         </div>
                     )}
                   </div>

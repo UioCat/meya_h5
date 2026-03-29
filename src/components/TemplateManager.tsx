@@ -1,20 +1,18 @@
+import { RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { intentTemplateOptions, normalizeOptionValue } from '../shared/intentTemplateOptions';
 
-type TemplateFields = {
-  person_ratio_percent: number;
-  person_ratio_percent_offset: number;
-  center_position: string;
-  center_position_offset_percent: number;
-  face_center_offset_deg: number;
+type IntentTemplateFields = {
+  bodyRange: string;
+  shotType: string;
+  orientation: string;
+  compositionMethod: string;
+  cameraHeight: string;
+  eyeStatus: string;
+  mouthStatus: string;
 };
 
-type TemplateDraft = {
-  person_ratio_percent: string;
-  person_ratio_percent_offset: string;
-  center_position: string;
-  center_position_offset_percent: string;
-  face_center_offset_deg: string;
-};
+type IntentTemplateDraft = IntentTemplateFields;
 
 type KvItem = {
   type: string;
@@ -25,74 +23,40 @@ type KvItem = {
 };
 
 type TemplateItem = KvItem & {
-  parsedValue: TemplateFields | null;
+  parsedValue: IntentTemplateFields | null;
 };
 
-const TEMPLATE_TYPE = 'alignment_person_template';
-const DEFAULT_FIELDS: TemplateFields = {
-  person_ratio_percent: 30,
-  person_ratio_percent_offset: 5,
-  center_position: '眼睛',
-  center_position_offset_percent: 3,
-  face_center_offset_deg: 3
+type TemplateManagerProps = {
+  embedded?: boolean;
 };
 
-const toDraft = (value: TemplateFields): TemplateDraft => ({
-  person_ratio_percent: String(value.person_ratio_percent),
-  person_ratio_percent_offset: String(value.person_ratio_percent_offset),
-  center_position: value.center_position,
-  center_position_offset_percent: String(value.center_position_offset_percent),
-  face_center_offset_deg: String(value.face_center_offset_deg)
-});
+const TEMPLATE_TYPE = 'intent_template';
 
-const DEFAULT_DRAFT: TemplateDraft = toDraft(DEFAULT_FIELDS);
-
-const toNumber = (value: unknown, fallback = 0) => {
-  const n = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(n) ? n : fallback;
+const DEFAULT_FIELDS: IntentTemplateFields = {
+  bodyRange: intentTemplateOptions.bodyRange[0] ?? '',
+  shotType: intentTemplateOptions.shotType[0] ?? '',
+  orientation: intentTemplateOptions.orientation[0] ?? '',
+  compositionMethod: intentTemplateOptions.compositionMethod[0] ?? '',
+  cameraHeight: intentTemplateOptions.cameraHeight[0] ?? '',
+  eyeStatus: intentTemplateOptions.eyeStatus[0] ?? '',
+  mouthStatus: intentTemplateOptions.mouthStatus[0] ?? ''
 };
 
-const parseTemplateValue = (value: unknown): TemplateFields | null => {
-  let source = value;
-  if (typeof source === 'string') {
-    try {
-      source = JSON.parse(source);
-    } catch {
-      return null;
-    }
-  }
-  if (!source || typeof source !== 'object') {
-    return null;
-  }
+const FIELD_CONFIG = [
+  { key: 'bodyRange', label: '身体范围（A）', options: intentTemplateOptions.bodyRange },
+  { key: 'shotType', label: '景别类型（B）', options: intentTemplateOptions.shotType },
+  { key: 'orientation', label: '方位角（C）', options: intentTemplateOptions.orientation },
+  { key: 'compositionMethod', label: '构图方法（D）', options: intentTemplateOptions.compositionMethod },
+  { key: 'cameraHeight', label: '机位高度（E）', options: intentTemplateOptions.cameraHeight },
+  { key: 'eyeStatus', label: '眼睛状态', options: intentTemplateOptions.eyeStatus },
+  { key: 'mouthStatus', label: '嘴巴状态', options: intentTemplateOptions.mouthStatus }
+] as const satisfies ReadonlyArray<{
+  key: keyof IntentTemplateFields;
+  label: string;
+  options: readonly string[];
+}>;
 
-  const obj = source as Record<string, unknown>;
-  const centerPosition = typeof obj.center_position === 'string' ? obj.center_position : '';
-  if (!centerPosition) {
-    return null;
-  }
-
-  return {
-    person_ratio_percent: toNumber(obj.person_ratio_percent, DEFAULT_FIELDS.person_ratio_percent),
-    person_ratio_percent_offset: toNumber(
-        obj.person_ratio_percent_offset,
-        DEFAULT_FIELDS.person_ratio_percent_offset
-    ),
-    center_position: centerPosition,
-    center_position_offset_percent: toNumber(
-        obj.center_position_offset_percent,
-        DEFAULT_FIELDS.center_position_offset_percent
-    ),
-    face_center_offset_deg: toNumber(
-        obj.face_center_offset_deg,
-        DEFAULT_FIELDS.face_center_offset_deg
-    )
-  };
-};
-
-const formatTime = (ts?: number) => {
-  if (!ts) return '--';
-  return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false });
-};
+const DEFAULT_DRAFT: IntentTemplateDraft = { ...DEFAULT_FIELDS };
 
 const parseJsonSafely = (text: string) => {
   const trimmed = text.trim();
@@ -111,41 +75,66 @@ const summarizeResponseText = (text: string) => {
   return trimmed;
 };
 
-const parseTemplateDraft = (draft: TemplateDraft): { value: TemplateFields | null; error: string } => {
-  const parseRequiredNumber = (raw: string, fieldName: string) => {
-    const text = raw.trim();
-    if (!text) return { value: null as number | null, error: `${fieldName}不能为空` };
-    const n = Number(text);
-    if (!Number.isFinite(n)) return { value: null as number | null, error: `${fieldName}必须是数字` };
-    return { value: n, error: '' };
-  };
-
-  const ratio = parseRequiredNumber(draft.person_ratio_percent, '人体占比百分比');
-  if (ratio.error) return { value: null, error: ratio.error };
-  const ratioOffset = parseRequiredNumber(draft.person_ratio_percent_offset, '人体占比百分比偏差');
-  if (ratioOffset.error) return { value: null, error: ratioOffset.error };
-  const centerOffset = parseRequiredNumber(draft.center_position_offset_percent, '居中位置偏差百分比');
-  if (centerOffset.error) return { value: null, error: centerOffset.error };
-  const faceOffset = parseRequiredNumber(draft.face_center_offset_deg, '人脸居中偏差度数');
-  if (faceOffset.error) return { value: null, error: faceOffset.error };
-
-  if (!draft.center_position.trim()) {
-    return { value: null, error: '居中位置不能为空' };
-  }
-
-  return {
-    value: {
-      person_ratio_percent: ratio.value!,
-      person_ratio_percent_offset: ratioOffset.value!,
-      center_position: draft.center_position,
-      center_position_offset_percent: centerOffset.value!,
-      face_center_offset_deg: faceOffset.value!
-    },
-    error: ''
-  };
+const formatTime = (ts?: number) => {
+  if (!ts) return '--';
+  return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false });
 };
 
-function TemplateManager() {
+const parseTemplateValue = (value: unknown): IntentTemplateFields | null => {
+  let source = value;
+  if (typeof source === 'string') {
+    source = parseJsonSafely(source);
+  }
+  if (!source || typeof source !== 'object') {
+    return null;
+  }
+
+  const obj = source as Record<string, unknown>;
+  const next: IntentTemplateFields = { ...DEFAULT_FIELDS };
+
+  for (const field of FIELD_CONFIG) {
+    const rawValue =
+      obj[field.key] ??
+      obj[
+        field.key
+          .replace(/[A-Z]/g, match => `_${match.toLowerCase()}`)
+      ];
+    if (typeof rawValue !== 'string') {
+      if (field.key === 'cameraHeight') {
+        next[field.key] = DEFAULT_FIELDS.cameraHeight;
+        continue;
+      }
+      return null;
+    }
+    const normalizedValue = normalizeOptionValue(rawValue);
+    const isKnownValue = (field.options as readonly string[]).includes(normalizedValue);
+    if (!isKnownValue) {
+      return null;
+    }
+    next[field.key] = normalizedValue;
+  }
+
+  return next;
+};
+
+const validateTemplateDraft = (draft: IntentTemplateDraft): { value: IntentTemplateFields | null; error: string } => {
+  const next: IntentTemplateFields = { ...DEFAULT_FIELDS };
+
+  for (const field of FIELD_CONFIG) {
+    const rawValue = normalizeOptionValue(draft[field.key]);
+    if (!rawValue.trim()) {
+      return { value: null, error: `${field.label}不能为空` };
+    }
+    if (!(field.options as readonly string[]).includes(rawValue)) {
+      return { value: null, error: `${field.label} 的值不在可选范围内` };
+    }
+    next[field.key] = rawValue;
+  }
+
+  return { value: next, error: '' };
+};
+
+function TemplateManager({ embedded = false }: TemplateManagerProps) {
   const configBaseUrl = 'https://www.uiofield.top/config_server';
 
   const [items, setItems] = useState<TemplateItem[]>([]);
@@ -156,8 +145,8 @@ function TemplateManager() {
   const [editingKey, setEditingKey] = useState<string | null>(null);
 
   const [newKey, setNewKey] = useState('');
-  const [newForm, setNewForm] = useState<TemplateDraft>(DEFAULT_DRAFT);
-  const [editForm, setEditForm] = useState<TemplateDraft>(DEFAULT_DRAFT);
+  const [newForm, setNewForm] = useState<IntentTemplateDraft>(DEFAULT_DRAFT);
+  const [editForm, setEditForm] = useState<IntentTemplateDraft>(DEFAULT_DRAFT);
 
   const loadTemplates = async () => {
     setLoading(true);
@@ -175,11 +164,11 @@ function TemplateManager() {
         throw new Error(detail || `HTTP ${resp.status}`);
       }
       const nextItems: TemplateItem[] = Array.isArray(data?.items)
-          ? data.items.map((item: KvItem) => ({
+        ? data.items.map((item: KvItem) => ({
             ...item,
             parsedValue: parseTemplateValue(item.value)
           }))
-          : [];
+        : [];
       nextItems.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
       setItems(nextItems);
     } catch (err: any) {
@@ -213,9 +202,9 @@ function TemplateManager() {
       setError('请先输入模版名称（key）');
       return;
     }
-    const createParsed = parseTemplateDraft(newForm);
-    if (!createParsed.value) {
-      setError(createParsed.error);
+    const parsed = validateTemplateDraft(newForm);
+    if (!parsed.value) {
+      setError(parsed.error);
       return;
     }
     setSaving(true);
@@ -224,10 +213,10 @@ function TemplateManager() {
       await postJson('/kv/create', {
         type: TEMPLATE_TYPE,
         key,
-        value: createParsed.value
+        value: parsed.value
       });
       setNewKey('');
-      setNewForm(DEFAULT_DRAFT);
+      setNewForm({ ...DEFAULT_DRAFT });
       await loadTemplates();
     } catch (err: any) {
       setError(err.message || '新增模版失败');
@@ -258,13 +247,13 @@ function TemplateManager() {
   const startEdit = (item: TemplateItem) => {
     setEditingKey(item.key);
     setExpandedKey(item.key);
-    setEditForm(toDraft(item.parsedValue || DEFAULT_FIELDS));
+    setEditForm({ ...(item.parsedValue || DEFAULT_FIELDS) });
   };
 
   const updateTemplate = async (key: string) => {
-    const updateParsed = parseTemplateDraft(editForm);
-    if (!updateParsed.value) {
-      setError(updateParsed.error);
+    const parsed = validateTemplateDraft(editForm);
+    if (!parsed.value) {
+      setError(parsed.error);
       return;
     }
     setSaving(true);
@@ -273,7 +262,7 @@ function TemplateManager() {
       await postJson('/kv/update', {
         type: TEMPLATE_TYPE,
         key,
-        value: updateParsed.value
+        value: parsed.value
       });
       setEditingKey(null);
       await loadTemplates();
@@ -284,195 +273,165 @@ function TemplateManager() {
     }
   };
 
-  const renderForm = (
-      form: TemplateDraft,
-      setForm: (next: TemplateDraft) => void
-  ) => {
-    const setField = <K extends keyof TemplateDraft>(key: K, value: TemplateDraft[K]) => {
+  const renderForm = (form: IntentTemplateDraft, setForm: (next: IntentTemplateDraft) => void) => {
+    const setField = <K extends keyof IntentTemplateDraft>(key: K, value: IntentTemplateDraft[K]) => {
       setForm({ ...form, [key]: value });
     };
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="text-slate-300 text-sm">人体占比百分比</label>
-            <input
-                type="number"
-                value={form.person_ratio_percent}
-                onChange={e => setField('person_ratio_percent', e.target.value)}
-                className="w-full mt-1 bg-slate-900 text-white p-2 rounded"
-            />
-          </div>
-          <div>
-            <label className="text-slate-300 text-sm">人体占比百分比偏差</label>
-            <input
-                type="number"
-                value={form.person_ratio_percent_offset}
-                onChange={e => setField('person_ratio_percent_offset', e.target.value)}
-                className="w-full mt-1 bg-slate-900 text-white p-2 rounded"
-            />
-          </div>
-          <div>
-            <label className="text-slate-300 text-sm">居中位置</label>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {FIELD_CONFIG.map(field => (
+          <div key={field.key}>
+            <label className="text-sm text-slate-300">{field.label}</label>
             <select
-                value={form.center_position}
-                onChange={e => setField('center_position', e.target.value)}
-                className="w-full mt-1 bg-slate-900 text-white p-2 rounded"
+              value={form[field.key]}
+              onChange={event => setField(field.key, event.target.value)}
+              className="mt-1 w-full rounded bg-slate-900 p-2 text-white outline-none"
             >
-              <option value="眼睛">眼睛</option>
-              <option value="肩膀">肩膀</option>
-              <option value="髋部">髋部</option>
-              <option value="膝盖">膝盖</option>
+              {field.options.map(option => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
             </select>
           </div>
-          <div>
-            <label className="text-slate-300 text-sm">居中位置偏差百分比</label>
-            <input
-                type="number"
-                value={form.center_position_offset_percent}
-                onChange={e => setField('center_position_offset_percent', e.target.value)}
-                className="w-full mt-1 bg-slate-900 text-white p-2 rounded"
-            />
-          </div>
-          <div>
-            <label className="text-slate-300 text-sm">人脸居中偏差度数</label>
-            <input
-                type="number"
-                value={form.face_center_offset_deg}
-                onChange={e => setField('face_center_offset_deg', e.target.value)}
-                className="w-full mt-1 bg-slate-900 text-white p-2 rounded"
-            />
-          </div>
-        </div>
+        ))}
+      </div>
     );
   };
 
   return (
-      <div className="p-6 bg-slate-900 min-h-screen text-white">
-        <div className="max-w-4xl mx-auto space-y-6">
-          <div className="bg-slate-800 rounded-xl p-4">
-            <div className="flex items-center justify-between">
-              <h1 className="text-2xl font-bold">模版管理</h1>
-              <button
-                  onClick={() => void loadTemplates()}
-                  disabled={loading}
-                  className={`px-3 py-2 rounded ${loading ? 'bg-slate-600' : 'bg-blue-600'}`}
-              >
-                刷新列表
-              </button>
-            </div>
-          </div>
-
-          <div className="bg-slate-800 rounded-xl p-4 space-y-3">
-            <div className="text-slate-300">模版列表（{items.length}）</div>
-            {loading && <div className="text-slate-400 text-sm">加载中...</div>}
-            {!loading && items.length === 0 && (
-                <div className="text-slate-400 text-sm">暂无模版</div>
-            )}
-
-            {items.map(item => {
-              const expanded = expandedKey === item.key;
-              const editing = editingKey === item.key;
-              return (
-                  <div key={item.key} className="bg-slate-900 rounded p-3 space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <div className="font-medium">{item.key}</div>
-                        <div className="text-xs text-slate-400">
-                          updated_at: {formatTime(item.updated_at)}
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                            onClick={() => setExpandedKey(expanded ? null : item.key)}
-                            className="px-2 py-1 rounded bg-slate-700 text-sm"
-                        >
-                          {expanded ? '收起' : '展开'}
-                        </button>
-                        <button
-                            onClick={() => startEdit(item)}
-                            className="px-2 py-1 rounded bg-blue-700 text-sm"
-                        >
-                          修改
-                        </button>
-                        <button
-                            onClick={() => void deleteTemplate(item.key)}
-                            disabled={saving}
-                            className={`px-2 py-1 rounded text-sm ${saving ? 'bg-slate-600' : 'bg-rose-700'}`}
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </div>
-
-                    {expanded && (
-                        <div className="border border-slate-700 rounded p-3">
-                          {editing ? (
-                              <div className="space-y-3">
-                                {renderForm(editForm, setEditForm)}
-                                <div className="flex gap-2">
-                                  <button
-                                      onClick={() => void updateTemplate(item.key)}
-                                      disabled={saving}
-                                      className={`px-3 py-2 rounded ${saving ? 'bg-slate-600' : 'bg-emerald-700'}`}
-                                  >
-                                    保存修改
-                                  </button>
-                                  <button
-                                      onClick={() => setEditingKey(null)}
-                                      className="px-3 py-2 rounded bg-slate-700"
-                                  >
-                                    取消
-                                  </button>
-                                </div>
-                              </div>
-                          ) : item.parsedValue ? (
-                              <div className="text-sm space-y-1">
-                                <div>人体占比百分比：{item.parsedValue.person_ratio_percent}</div>
-                                <div>人体占比百分比偏差：{item.parsedValue.person_ratio_percent_offset}</div>
-                                <div>居中位置：{item.parsedValue.center_position}</div>
-                                <div>居中位置偏差百分比：{item.parsedValue.center_position_offset_percent}</div>
-                                <div>人脸居中偏差度数：{item.parsedValue.face_center_offset_deg}</div>
-                              </div>
-                          ) : (
-                              <div className="text-amber-300 text-sm">
-                                当前 value 无法解析为“对准-人”模版结构，请点击“修改”后重存。
-                              </div>
-                          )}
-                        </div>
-                    )}
-                  </div>
-              );
-            })}
-          </div>
-
-          <div className="bg-slate-800 rounded-xl p-4 space-y-3">
-            <div className="text-slate-300">新增模版</div>
+    <div className={`${embedded ? '' : 'min-h-screen bg-slate-900 px-4 pb-32 pt-4 sm:px-6 lg:pb-40 lg:pt-6'}`}>
+      <div className={`mx-auto space-y-6 ${embedded ? 'max-w-none' : 'max-w-4xl'}`}>
+        <div className="rounded-xl bg-slate-800 p-4">
+          <div className="flex items-center justify-between">
             <div>
-              <label className="text-slate-300 text-sm">模版名称（key）</label>
-              <input
-                  type="text"
-                  value={newKey}
-                  onChange={e => setNewKey(e.target.value)}
-                  className="w-full mt-1 bg-slate-900 text-white p-2 rounded"
-                  placeholder="例如：human_center_default"
-              />
+              <h1 className="text-2xl font-bold text-white">意图模版</h1>
+              <p className="mt-1 text-sm text-slate-400">管理意图模版配置</p>
             </div>
-            {renderForm(newForm, setNewForm)}
             <button
-                onClick={() => void createTemplate()}
-                disabled={saving}
-                className={`w-full py-2 rounded ${saving ? 'bg-slate-600' : 'bg-emerald-600'}`}
+              onClick={() => void loadTemplates()}
+              disabled={loading}
+              className={`inline-flex items-center gap-2 rounded px-3 py-2 text-sm text-white ${
+                loading ? 'bg-slate-600' : 'bg-blue-600'
+              }`}
             >
-              新增
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              刷新列表
             </button>
           </div>
-
-          {error && (
-              <div className="text-red-400 text-sm">{error}</div>
-          )}
         </div>
+
+        <div className="rounded-xl bg-slate-800 p-4 space-y-3">
+          <div className="text-slate-300">模版列表（{items.length}）</div>
+          {loading && <div className="text-sm text-slate-400">加载中...</div>}
+          {!loading && items.length === 0 && <div className="text-sm text-slate-400">暂无模版</div>}
+
+          {items.map(item => {
+            const expanded = expandedKey === item.key;
+            const editing = editingKey === item.key;
+            return (
+              <div key={item.key} className="rounded bg-slate-900 p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="font-medium text-white">{item.key}</div>
+                    <div className="text-xs text-slate-400">updated_at: {formatTime(item.updated_at)}</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setExpandedKey(expanded ? null : item.key)}
+                      className="rounded bg-slate-700 px-2 py-1 text-sm text-white"
+                    >
+                      {expanded ? '收起' : '展开'}
+                    </button>
+                    <button
+                      onClick={() => startEdit(item)}
+                      className="rounded bg-blue-700 px-2 py-1 text-sm text-white"
+                    >
+                      修改
+                    </button>
+                    <button
+                      onClick={() => void deleteTemplate(item.key)}
+                      disabled={saving}
+                      className={`rounded px-2 py-1 text-sm text-white ${
+                        saving ? 'bg-slate-600' : 'bg-rose-700'
+                      }`}
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+
+                {expanded && (
+                  <div className="rounded border border-slate-700 p-3">
+                    {editing ? (
+                      <div className="space-y-3">
+                        {renderForm(editForm, setEditForm)}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => void updateTemplate(item.key)}
+                            disabled={saving}
+                            className={`rounded px-3 py-2 text-sm text-white ${
+                              saving ? 'bg-slate-600' : 'bg-emerald-700'
+                            }`}
+                          >
+                            保存修改
+                          </button>
+                          <button
+                            onClick={() => setEditingKey(null)}
+                            className="rounded bg-slate-700 px-3 py-2 text-sm text-white"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    ) : item.parsedValue ? (
+                      <div className="grid grid-cols-1 gap-2 text-sm text-white md:grid-cols-2">
+                        <div>身体范围（A）：{item.parsedValue.bodyRange}</div>
+                        <div>景别类型（B）：{item.parsedValue.shotType}</div>
+                        <div>方位角（C）：{item.parsedValue.orientation}</div>
+                        <div>构图方法（D）：{item.parsedValue.compositionMethod}</div>
+                        <div>机位高度（E）：{item.parsedValue.cameraHeight}</div>
+                        <div>眼睛状态：{item.parsedValue.eyeStatus}</div>
+                        <div>嘴巴状态：{item.parsedValue.mouthStatus}</div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-amber-300">
+                        当前 value 无法解析为意图模版结构，请点击“修改”后重存。
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="rounded-xl bg-slate-800 p-4 space-y-3">
+          <div className="text-slate-300">新增模版</div>
+          <div>
+            <label className="text-sm text-slate-300">模版名称（key）</label>
+            <input
+              type="text"
+              value={newKey}
+              onChange={event => setNewKey(event.target.value)}
+              className="mt-1 w-full rounded bg-slate-900 p-2 text-white outline-none"
+              placeholder="例如：portrait_intent_default"
+            />
+          </div>
+          {renderForm(newForm, setNewForm)}
+          <button
+            onClick={() => void createTemplate()}
+            disabled={saving}
+            className={`w-full rounded py-2 text-white ${saving ? 'bg-slate-600' : 'bg-emerald-600'}`}
+          >
+            新增
+          </button>
+        </div>
+
+        {error && <div className="text-sm text-red-400">{error}</div>}
       </div>
+    </div>
   );
 }
 
