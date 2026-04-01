@@ -47,6 +47,21 @@ type ShotRatioConfigItem = {
   ratioMax: string;
 };
 
+type AlignmentPersonPayload = {
+  type: 'alignment_person';
+  templateKey: string;
+  scene: string;
+  bodyRange: string;
+  range: string;
+  ratioMin: string;
+  ratioMax: string;
+  orientation: string;
+  compositionMethod: string;
+  cameraHeight: string;
+  eyeStatus: string;
+  mouthStatus: string;
+};
+
 const parseAlignmentTemplateValue = (value: unknown): AlignmentTemplateValue | null => {
   let source = value;
   if (typeof source === 'string') {
@@ -1037,29 +1052,41 @@ function LivePusher() {
         throw new Error(`未找到景别类型 ${selectedTemplate.shotType} 对应的景别与主体占比配置`);
       }
 
+      const concreteScene = stripOptionCode(selectedTemplate.shotType);
+      const concreteBodyRange = stripOptionCode(selectedTemplate.bodyRange);
       const concreteRange = stripOptionCode(matchedShotRatio.range || selectedTemplate.bodyRange);
       const concreteOrientation = stripOptionCode(selectedTemplate.orientation);
       const concreteCompositionMethod = stripOptionCode(selectedTemplate.compositionMethod);
+      const concreteCameraHeight = stripOptionCode(selectedTemplate.cameraHeight);
 
-      setPersonCenterPosition(concreteRange || stripOptionCode(selectedTemplate.bodyRange));
+      setPersonCenterPosition(concreteRange || concreteBodyRange);
       setPersonCenterPositionOffsetPercent(3);
 
-      await fetch(WEB_SERVER, {
+      const requestBody: AlignmentPersonPayload = {
+        type: 'alignment_person',
+        templateKey: selectedAlignmentTemplate.key,
+        scene: concreteScene,
+        bodyRange: concreteBodyRange,
+        range: concreteRange,
+        ratioMin: matchedShotRatio.ratioMin,
+        ratioMax: matchedShotRatio.ratioMax,
+        orientation: concreteOrientation,
+        compositionMethod: concreteCompositionMethod,
+        cameraHeight: concreteCameraHeight,
+        eyeStatus: selectedTemplate.eyeStatus,
+        mouthStatus: selectedTemplate.mouthStatus
+      };
+
+      const response = await fetch(WEB_SERVER, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          type: 'alignment_person',
-          range: concreteRange,
-          ratioMin: matchedShotRatio.ratioMin,
-          ratioMax: matchedShotRatio.ratioMax,
-          orientation: concreteOrientation,
-          compositionMethod: concreteCompositionMethod,
-          eyeStatus: selectedTemplate.eyeStatus,
-          mouthStatus: selectedTemplate.mouthStatus
-        })
+        body: JSON.stringify(requestBody)
       });
+      if (!response.ok) {
+        throw new Error(`提交失败（HTTP ${response.status}）`);
+      }
     } catch (err) {
       console.error('提交对准-人失败', err);
       setAlignmentError((err as Error).message || '提交失败');

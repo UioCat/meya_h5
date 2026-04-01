@@ -249,11 +249,15 @@
 ```json
 {
   "type": "alignment_person",
+  "templateKey": "portrait_intent_default",
+  "scene": "特写",
+  "bodyRange": "头部",
   "range": "头部",
   "ratioMin": "50",
   "ratioMax": "60",
   "orientation": "正脸",
   "compositionMethod": "居中构图",
+  "cameraHeight": "齐眼",
   "eyeStatus": "睁眼",
   "mouthStatus": "微笑"
 }
