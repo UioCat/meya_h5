@@ -23,10 +23,17 @@ function App() {
     showToast('目前当前还未支持');
   };
 
+  const navButtonClass = (active: boolean) =>
+    `flex min-h-[58px] w-full flex-col items-center justify-center gap-1 rounded-2xl border px-3 py-2 text-xs transition sm:min-h-[62px] ${
+      active
+        ? 'border-slate-950 bg-slate-950 text-white shadow-[0_10px_24px_rgba(15,23,42,0.16)]'
+        : 'border-slate-700 bg-slate-800 text-slate-300 shadow-[0_6px_18px_rgba(15,23,42,0.14)] hover:border-slate-600 hover:bg-slate-700'
+    }`;
+
   return (
-    <div className="min-h-screen w-full bg-[linear-gradient(180deg,#e8f1f8_0%,#f7f9fc_18%,#f6efe5_100%)]">
-      <div className="min-h-screen w-full bg-transparent">
-        <div className="min-h-screen w-full">
+    <div className="min-h-screen w-full bg-slate-900">
+      <div className="w-full bg-slate-900">
+        <div className="w-full">
           <div className={activeTab === 'capture' ? 'block' : 'hidden'}>
             <LivePusher />
           </div>
@@ -46,39 +53,30 @@ function App() {
         </div>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-30">
-        <div className="mx-auto w-full max-w-[360px] px-4 pb-[max(10px,env(safe-area-inset-bottom))] lg:max-w-[420px] lg:px-0 lg:pb-6">
-          <div className="rounded-[24px] border border-white/60 bg-white/18 shadow-[0_10px_28px_rgba(15,23,42,0.16)] backdrop-blur-xl">
-            <div className="flex justify-center pt-1.5">
-              <div className="h-1 w-10 rounded-full bg-white/80" />
-            </div>
-            <div className="grid grid-cols-3 px-2 pb-1.5 pt-1">
-              <button
-                onClick={() => setActiveTab('capture')}
-                className={`flex flex-col items-center gap-0.5 rounded-xl px-2 py-1 text-[11px] transition ${
-                  activeTab === 'capture' ? 'text-slate-950' : 'text-slate-600'
-                }`}
-              >
-                <Camera className={`h-4.5 w-4.5 ${activeTab === 'capture' ? 'text-violet-700' : 'text-slate-500'}`} />
-                <span className="font-medium leading-none">拍摄</span>
-              </button>
-              <button
-                onClick={handleOpenGallery}
-                className="flex flex-col items-center gap-0.5 rounded-xl px-2 py-1 text-[11px] text-slate-600 transition"
-              >
-                <Images className="h-4.5 w-4.5 text-slate-500" />
-                <span className="font-medium leading-none">照片库</span>
-              </button>
-              <button
-                onClick={() => setActiveTab('config')}
-                className={`flex flex-col items-center gap-0.5 rounded-xl px-2 py-1 text-[11px] transition ${
-                  activeTab === 'config' ? 'text-slate-950' : 'text-slate-600'
-                }`}
-              >
-                <Settings className={`h-4.5 w-4.5 ${activeTab === 'config' ? 'text-violet-700' : 'text-slate-500'}`} />
-                <span className="font-medium leading-none">配置</span>
-              </button>
-            </div>
+      <div className="border-t border-slate-800 bg-slate-900 shadow-[0_-8px_32px_rgba(15,23,42,0.2)]">
+        <div className="mx-auto w-full max-w-5xl px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 sm:px-4">
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={() => setActiveTab('capture')}
+              className={navButtonClass(activeTab === 'capture')}
+            >
+              <Camera className={`h-[18px] w-[18px] ${activeTab === 'capture' ? 'text-sky-300' : 'text-slate-400'}`} />
+              <span className="font-medium leading-none">拍摄</span>
+            </button>
+            <button
+              onClick={handleOpenGallery}
+              className={navButtonClass(false)}
+            >
+              <Images className="h-[18px] w-[18px] text-slate-400" />
+              <span className="font-medium leading-none">照片库</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('config')}
+              className={navButtonClass(activeTab === 'config')}
+            >
+              <Settings className={`h-[18px] w-[18px] ${activeTab === 'config' ? 'text-sky-300' : 'text-slate-400'}`} />
+              <span className="font-medium leading-none">配置</span>
+            </button>
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { RefreshCw } from 'lucide-react';
+import { ArrowLeft, Eye, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { intentTemplateOptions, normalizeOptionValue } from '../shared/intentTemplateOptions';
 
@@ -22,41 +22,48 @@ type KvItem = {
   updated_at?: number;
 };
 
-type TemplateItem = KvItem & {
-  parsedValue: IntentTemplateFields | null;
-};
-
 type TemplateManagerProps = {
   embedded?: boolean;
+  bodyRangeOptions?: readonly string[];
+  shotTypeOptions?: readonly string[];
 };
+
+type TemplatePageMode = 'list' | 'detail';
+type TemplateDetailMode = 'create' | 'view' | 'edit';
 
 const TEMPLATE_TYPE = 'intent_template';
 
-const DEFAULT_FIELDS: IntentTemplateFields = {
-  bodyRange: intentTemplateOptions.bodyRange[0] ?? '',
-  shotType: intentTemplateOptions.shotType[0] ?? '',
+type FieldConfigItem = {
+  key: keyof IntentTemplateFields;
+  label: string;
+  options: readonly string[];
+};
+
+const createDefaultFields = (
+  bodyRangeOptions: readonly string[],
+  shotTypeOptions: readonly string[]
+): IntentTemplateFields => ({
+  bodyRange: bodyRangeOptions[0] ?? '',
+  shotType: shotTypeOptions[0] ?? '',
   orientation: intentTemplateOptions.orientation[0] ?? '',
   compositionMethod: intentTemplateOptions.compositionMethod[0] ?? '',
   cameraHeight: intentTemplateOptions.cameraHeight[0] ?? '',
   eyeStatus: intentTemplateOptions.eyeStatus[0] ?? '',
   mouthStatus: intentTemplateOptions.mouthStatus[0] ?? ''
-};
+});
 
-const FIELD_CONFIG = [
-  { key: 'bodyRange', label: '身体范围（A）', options: intentTemplateOptions.bodyRange },
-  { key: 'shotType', label: '景别类型（B）', options: intentTemplateOptions.shotType },
+const createFieldConfig = (
+  bodyRangeOptions: readonly string[],
+  shotTypeOptions: readonly string[]
+): FieldConfigItem[] => [
+  { key: 'bodyRange', label: '身体范围（A）', options: bodyRangeOptions },
+  { key: 'shotType', label: '景别类型（B）', options: shotTypeOptions },
   { key: 'orientation', label: '方位角（C）', options: intentTemplateOptions.orientation },
   { key: 'compositionMethod', label: '构图方法（D）', options: intentTemplateOptions.compositionMethod },
   { key: 'cameraHeight', label: '机位高度（E）', options: intentTemplateOptions.cameraHeight },
   { key: 'eyeStatus', label: '眼睛状态', options: intentTemplateOptions.eyeStatus },
   { key: 'mouthStatus', label: '嘴巴状态', options: intentTemplateOptions.mouthStatus }
-] as const satisfies ReadonlyArray<{
-  key: keyof IntentTemplateFields;
-  label: string;
-  options: readonly string[];
-}>;
-
-const DEFAULT_DRAFT: IntentTemplateDraft = { ...DEFAULT_FIELDS };
+];
 
 const parseJsonSafely = (text: string) => {
   const trimmed = text.trim();
@@ -80,7 +87,11 @@ const formatTime = (ts?: number) => {
   return new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false });
 };
 
-const parseTemplateValue = (value: unknown): IntentTemplateFields | null => {
+const parseTemplateValue = (
+  value: unknown,
+  fieldConfig: readonly FieldConfigItem[],
+  defaultFields: IntentTemplateFields
+): IntentTemplateFields | null => {
   let source = value;
   if (typeof source === 'string') {
     source = parseJsonSafely(source);
@@ -90,9 +101,9 @@ const parseTemplateValue = (value: unknown): IntentTemplateFields | null => {
   }
 
   const obj = source as Record<string, unknown>;
-  const next: IntentTemplateFields = { ...DEFAULT_FIELDS };
+  const next: IntentTemplateFields = { ...defaultFields };
 
-  for (const field of FIELD_CONFIG) {
+  for (const field of fieldConfig) {
     const rawValue =
       obj[field.key] ??
       obj[
@@ -101,7 +112,7 @@ const parseTemplateValue = (value: unknown): IntentTemplateFields | null => {
       ];
     if (typeof rawValue !== 'string') {
       if (field.key === 'cameraHeight') {
-        next[field.key] = DEFAULT_FIELDS.cameraHeight;
+        next[field.key] = defaultFields.cameraHeight;
         continue;
       }
       return null;
@@ -117,10 +128,14 @@ const parseTemplateValue = (value: unknown): IntentTemplateFields | null => {
   return next;
 };
 
-const validateTemplateDraft = (draft: IntentTemplateDraft): { value: IntentTemplateFields | null; error: string } => {
-  const next: IntentTemplateFields = { ...DEFAULT_FIELDS };
+const validateTemplateDraftWithConfig = (
+  draft: IntentTemplateDraft,
+  fieldConfig: readonly FieldConfigItem[],
+  defaultFields: IntentTemplateFields
+): { value: IntentTemplateFields | null; error: string } => {
+  const next: IntentTemplateFields = { ...defaultFields };
 
-  for (const field of FIELD_CONFIG) {
+  for (const field of fieldConfig) {
     const rawValue = normalizeOptionValue(draft[field.key]);
     if (!rawValue.trim()) {
       return { value: null, error: `${field.label}不能为空` };
@@ -134,19 +149,26 @@ const validateTemplateDraft = (draft: IntentTemplateDraft): { value: IntentTempl
   return { value: next, error: '' };
 };
 
-function TemplateManager({ embedded = false }: TemplateManagerProps) {
+function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }: TemplateManagerProps) {
   const configBaseUrl = 'https://www.uiofield.top/config_server';
+  const resolvedBodyRangeOptions =
+    bodyRangeOptions && bodyRangeOptions.length > 0 ? [...bodyRangeOptions] : [...intentTemplateOptions.bodyRange];
+  const resolvedShotTypeOptions =
+    shotTypeOptions && shotTypeOptions.length > 0 ? [...shotTypeOptions] : [...intentTemplateOptions.shotType];
+  const resolvedBodyRangeKey = resolvedBodyRangeOptions.join('|');
+  const resolvedShotTypeKey = resolvedShotTypeOptions.join('|');
+  const defaultFields = createDefaultFields(resolvedBodyRangeOptions, resolvedShotTypeOptions);
+  const fieldConfig = createFieldConfig(resolvedBodyRangeOptions, resolvedShotTypeOptions);
 
-  const [items, setItems] = useState<TemplateItem[]>([]);
+  const [items, setItems] = useState<KvItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-
-  const [newKey, setNewKey] = useState('');
-  const [newForm, setNewForm] = useState<IntentTemplateDraft>(DEFAULT_DRAFT);
-  const [editForm, setEditForm] = useState<IntentTemplateDraft>(DEFAULT_DRAFT);
+  const [pageMode, setPageMode] = useState<TemplatePageMode>('list');
+  const [detailMode, setDetailMode] = useState<TemplateDetailMode>('create');
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [draftKey, setDraftKey] = useState('');
+  const [draftForm, setDraftForm] = useState<IntentTemplateDraft>(defaultFields);
 
   const loadTemplates = async () => {
     setLoading(true);
@@ -163,12 +185,7 @@ function TemplateManager({ embedded = false }: TemplateManagerProps) {
         const detail = (data && typeof data.error === 'string' ? data.error : '') || summarizeResponseText(text);
         throw new Error(detail || `HTTP ${resp.status}`);
       }
-      const nextItems: TemplateItem[] = Array.isArray(data?.items)
-        ? data.items.map((item: KvItem) => ({
-            ...item,
-            parsedValue: parseTemplateValue(item.value)
-          }))
-        : [];
+      const nextItems: KvItem[] = Array.isArray(data?.items) ? data.items : [];
       nextItems.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
       setItems(nextItems);
     } catch (err: any) {
@@ -181,6 +198,65 @@ function TemplateManager({ embedded = false }: TemplateManagerProps) {
   useEffect(() => {
     void loadTemplates();
   }, []);
+
+  const selectedItem = selectedKey ? items.find(item => item.key === selectedKey) ?? null : null;
+  const selectedParsedValue = selectedItem ? parseTemplateValue(selectedItem.value, fieldConfig, defaultFields) : null;
+
+  useEffect(() => {
+    setDraftForm(prev => {
+      const normalizedBodyRange = normalizeOptionValue(prev.bodyRange);
+      const nextBodyRange = resolvedBodyRangeOptions.includes(normalizedBodyRange)
+        ? normalizedBodyRange
+        : defaultFields.bodyRange;
+      const normalizedShotType = normalizeOptionValue(prev.shotType);
+      const nextShotType = resolvedShotTypeOptions.includes(normalizedShotType)
+        ? normalizedShotType
+        : defaultFields.shotType;
+      return {
+        ...prev,
+        bodyRange: nextBodyRange,
+        shotType: nextShotType
+      };
+    });
+  }, [defaultFields.bodyRange, defaultFields.shotType, resolvedBodyRangeKey, resolvedShotTypeKey]);
+
+  const backToList = () => {
+    setPageMode('list');
+    setDetailMode('create');
+    setSelectedKey(null);
+    setDraftKey('');
+    setDraftForm({ ...defaultFields });
+    setError('');
+  };
+
+  const openCreate = () => {
+    setPageMode('detail');
+    setDetailMode('create');
+    setSelectedKey(null);
+    setDraftKey('');
+    setDraftForm({ ...defaultFields });
+    setError('');
+  };
+
+  const openView = (item: KvItem) => {
+    const parsedValue = parseTemplateValue(item.value, fieldConfig, defaultFields);
+    setPageMode('detail');
+    setDetailMode('view');
+    setSelectedKey(item.key);
+    setDraftKey(item.key);
+    setDraftForm({ ...(parsedValue || defaultFields) });
+    setError('');
+  };
+
+  const openEdit = (item: KvItem) => {
+    const parsedValue = parseTemplateValue(item.value, fieldConfig, defaultFields);
+    setPageMode('detail');
+    setDetailMode('edit');
+    setSelectedKey(item.key);
+    setDraftKey(item.key);
+    setDraftForm({ ...(parsedValue || defaultFields) });
+    setError(parsedValue ? '' : '当前 value 无法解析为意图模版结构，请重新选择后保存。');
+  };
 
   const postJson = async (path: string, body: Record<string, unknown>) => {
     const resp = await fetch(`${configBaseUrl}${path}`, {
@@ -197,12 +273,12 @@ function TemplateManager({ embedded = false }: TemplateManagerProps) {
   };
 
   const createTemplate = async () => {
-    const key = newKey.trim();
+    const key = draftKey.trim();
     if (!key) {
       setError('请先输入模版名称（key）');
       return;
     }
-    const parsed = validateTemplateDraft(newForm);
+    const parsed = validateTemplateDraftWithConfig(draftForm, fieldConfig, defaultFields);
     if (!parsed.value) {
       setError(parsed.error);
       return;
@@ -215,9 +291,8 @@ function TemplateManager({ embedded = false }: TemplateManagerProps) {
         key,
         value: parsed.value
       });
-      setNewKey('');
-      setNewForm({ ...DEFAULT_DRAFT });
       await loadTemplates();
+      backToList();
     } catch (err: any) {
       setError(err.message || '新增模版失败');
     } finally {
@@ -234,9 +309,10 @@ function TemplateManager({ embedded = false }: TemplateManagerProps) {
         type: TEMPLATE_TYPE,
         key
       });
-      if (expandedKey === key) setExpandedKey(null);
-      if (editingKey === key) setEditingKey(null);
       await loadTemplates();
+      if (selectedKey === key) {
+        backToList();
+      }
     } catch (err: any) {
       setError(err.message || '删除模版失败');
     } finally {
@@ -244,14 +320,8 @@ function TemplateManager({ embedded = false }: TemplateManagerProps) {
     }
   };
 
-  const startEdit = (item: TemplateItem) => {
-    setEditingKey(item.key);
-    setExpandedKey(item.key);
-    setEditForm({ ...(item.parsedValue || DEFAULT_FIELDS) });
-  };
-
   const updateTemplate = async (key: string) => {
-    const parsed = validateTemplateDraft(editForm);
+    const parsed = validateTemplateDraftWithConfig(draftForm, fieldConfig, defaultFields);
     if (!parsed.value) {
       setError(parsed.error);
       return;
@@ -264,8 +334,8 @@ function TemplateManager({ embedded = false }: TemplateManagerProps) {
         key,
         value: parsed.value
       });
-      setEditingKey(null);
       await loadTemplates();
+      backToList();
     } catch (err: any) {
       setError(err.message || '更新模版失败');
     } finally {
@@ -280,7 +350,7 @@ function TemplateManager({ embedded = false }: TemplateManagerProps) {
 
     return (
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {FIELD_CONFIG.map(field => (
+        {fieldConfig.map(field => (
           <div key={field.key}>
             <label className="text-sm text-slate-300">{field.label}</label>
             <select
@@ -300,136 +370,225 @@ function TemplateManager({ embedded = false }: TemplateManagerProps) {
     );
   };
 
+  const isViewMode = detailMode === 'view';
+  const isCreateMode = detailMode === 'create';
+  const detailTitle =
+    detailMode === 'create' ? '新增模版' : detailMode === 'edit' ? '修改模版' : '查看模版';
+  const detailDescription =
+    detailMode === 'create'
+      ? '填写模版名称和参数后保存'
+      : detailMode === 'edit'
+        ? '更新当前模版参数'
+        : '查看当前模版详情';
+  const actionButtonClass =
+    'inline-flex h-10 w-10 items-center justify-center rounded-xl border text-slate-200 transition disabled:cursor-not-allowed disabled:opacity-50';
+
   return (
     <div className={`${embedded ? '' : 'min-h-screen bg-slate-900 px-4 pb-32 pt-4 sm:px-6 lg:pb-40 lg:pt-6'}`}>
       <div className={`mx-auto space-y-6 ${embedded ? 'max-w-none' : 'max-w-4xl'}`}>
-        <div className="rounded-xl bg-slate-800 p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-white">意图模版</h1>
-              <p className="mt-1 text-sm text-slate-400">管理意图模版配置</p>
-            </div>
-            <button
-              onClick={() => void loadTemplates()}
-              disabled={loading}
-              className={`inline-flex items-center gap-2 rounded px-3 py-2 text-sm text-white ${
-                loading ? 'bg-slate-600' : 'bg-blue-600'
-              }`}
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              刷新列表
-            </button>
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-slate-800 p-4 space-y-3">
-          <div className="text-slate-300">模版列表（{items.length}）</div>
-          {loading && <div className="text-sm text-slate-400">加载中...</div>}
-          {!loading && items.length === 0 && <div className="text-sm text-slate-400">暂无模版</div>}
-
-          {items.map(item => {
-            const expanded = expandedKey === item.key;
-            const editing = editingKey === item.key;
-            return (
-              <div key={item.key} className="rounded bg-slate-900 p-3 space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="font-medium text-white">{item.key}</div>
-                    <div className="text-xs text-slate-400">updated_at: {formatTime(item.updated_at)}</div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setExpandedKey(expanded ? null : item.key)}
-                      className="rounded bg-slate-700 px-2 py-1 text-sm text-white"
-                    >
-                      {expanded ? '收起' : '展开'}
-                    </button>
-                    <button
-                      onClick={() => startEdit(item)}
-                      className="rounded bg-blue-700 px-2 py-1 text-sm text-white"
-                    >
-                      修改
-                    </button>
-                    <button
-                      onClick={() => void deleteTemplate(item.key)}
-                      disabled={saving}
-                      className={`rounded px-2 py-1 text-sm text-white ${
-                        saving ? 'bg-slate-600' : 'bg-rose-700'
-                      }`}
-                    >
-                      删除
-                    </button>
-                  </div>
+        {pageMode === 'list' ? (
+          <>
+            <div className="rounded-2xl bg-slate-800 p-4 sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-2xl font-bold text-white">意图模版列表</h2>
+                  <p className="mt-1 text-sm text-slate-400">先查看列表，再进入新增、查看或修改页面</p>
                 </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void loadTemplates()}
+                    disabled={loading}
+                    className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm text-white transition ${
+                      loading
+                        ? 'border-slate-600 bg-slate-700'
+                        : 'border-slate-600 bg-slate-900 hover:bg-slate-700'
+                    }`}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                    刷新
+                  </button>
+                  <button
+                    onClick={openCreate}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm text-white transition hover:bg-emerald-500"
+                  >
+                    <Plus className="h-4 w-4" />
+                    新增
+                  </button>
+                </div>
+              </div>
+            </div>
 
-                {expanded && (
-                  <div className="rounded border border-slate-700 p-3">
-                    {editing ? (
-                      <div className="space-y-3">
-                        {renderForm(editForm, setEditForm)}
-                        <div className="flex gap-2">
+            <div className="rounded-2xl bg-slate-800 p-4 sm:p-5">
+              <div className="mb-4 text-sm text-slate-300">模版数量：{items.length}</div>
+              {error && (
+                <div className="mb-4 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                  {error}
+                </div>
+              )}
+              {loading && <div className="rounded-xl bg-slate-900 px-4 py-6 text-sm text-slate-400">加载中...</div>}
+              {!loading && items.length === 0 && (
+                <div className="rounded-xl border border-dashed border-slate-600 bg-slate-900 px-4 py-10 text-center">
+                  <div className="text-base font-medium text-white">暂无模版</div>
+                  <div className="mt-2 text-sm text-slate-400">可以先点击右上角“新增”创建第一条意图模版</div>
+                </div>
+              )}
+
+              {!loading && items.length > 0 && (
+                <div className="space-y-3">
+                  {items.map(item => {
+                    const parsedValue = parseTemplateValue(item.value, fieldConfig, defaultFields);
+                    return (
+                      <div
+                        key={item.key}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-900 px-4 py-3"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-base font-medium text-white">{item.key}</div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                            <span>updated_at: {formatTime(item.updated_at)}</span>
+                            {!parsedValue && (
+                              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300">待修复</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
                           <button
-                            onClick={() => void updateTemplate(item.key)}
-                            disabled={saving}
-                            className={`rounded px-3 py-2 text-sm text-white ${
-                              saving ? 'bg-slate-600' : 'bg-emerald-700'
-                            }`}
+                            onClick={() => openView(item)}
+                            title="查看"
+                            aria-label={`查看模版 ${item.key}`}
+                            className={`${actionButtonClass} border-slate-600 bg-slate-800 hover:bg-slate-700`}
                           >
-                            保存修改
+                            <Eye className="h-4 w-4" />
                           </button>
                           <button
-                            onClick={() => setEditingKey(null)}
-                            className="rounded bg-slate-700 px-3 py-2 text-sm text-white"
+                            onClick={() => openEdit(item)}
+                            title="修改"
+                            aria-label={`修改模版 ${item.key}`}
+                            className={`${actionButtonClass} border-blue-500/40 bg-blue-500/10 hover:bg-blue-500/20`}
                           >
-                            取消
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => void deleteTemplate(item.key)}
+                            title="删除"
+                            aria-label={`删除模版 ${item.key}`}
+                            disabled={saving}
+                            className={`${actionButtonClass} border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20`}
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
                       </div>
-                    ) : item.parsedValue ? (
-                      <div className="grid grid-cols-1 gap-2 text-sm text-white md:grid-cols-2">
-                        <div>身体范围（A）：{item.parsedValue.bodyRange}</div>
-                        <div>景别类型（B）：{item.parsedValue.shotType}</div>
-                        <div>方位角（C）：{item.parsedValue.orientation}</div>
-                        <div>构图方法（D）：{item.parsedValue.compositionMethod}</div>
-                        <div>机位高度（E）：{item.parsedValue.cameraHeight}</div>
-                        <div>眼睛状态：{item.parsedValue.eyeStatus}</div>
-                        <div>嘴巴状态：{item.parsedValue.mouthStatus}</div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="rounded-2xl bg-slate-800 p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={backToList}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-600 bg-slate-900 text-slate-200 transition hover:bg-slate-700"
+                  aria-label="返回列表"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </button>
+                <div>
+                  <h2 className="text-2xl font-bold text-white">{detailTitle}</h2>
+                  <p className="mt-1 text-sm text-slate-400">{detailDescription}</p>
+                </div>
+              </div>
+
+              {detailMode === 'view' && selectedItem && (
+                <button
+                  onClick={() => openEdit(selectedItem)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm text-white transition hover:bg-blue-500"
+                >
+                  <Pencil className="h-4 w-4" />
+                  修改
+                </button>
+              )}
+            </div>
+
+            {error && (
+              <div className="mt-4 rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                {error}
+              </div>
+            )}
+
+            {detailMode !== 'create' && !selectedItem ? (
+              <div className="mt-4 rounded-xl bg-slate-900 px-4 py-8 text-center text-sm text-slate-400">
+                当前模版不存在或已被删除，请返回列表刷新后重试。
+              </div>
+            ) : (
+              <div className="mt-5 space-y-5">
+                <div className="rounded-xl bg-slate-900 p-4">
+                  <label className="text-sm text-slate-300">模版名称（key）</label>
+                  <input
+                    type="text"
+                    value={draftKey}
+                    onChange={event => setDraftKey(event.target.value)}
+                    readOnly={!isCreateMode}
+                    className={`mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white outline-none ${
+                      isCreateMode ? 'focus:border-emerald-400' : 'cursor-not-allowed opacity-80'
+                    }`}
+                    placeholder="例如：portrait_intent_default"
+                  />
+                  {!isCreateMode && selectedItem && (
+                    <div className="mt-2 text-xs text-slate-400">updated_at: {formatTime(selectedItem.updated_at)}</div>
+                  )}
+                </div>
+
+                {isViewMode ? (
+                  <div className="rounded-xl bg-slate-900 p-4">
+                    {selectedParsedValue ? (
+                      <div className="grid grid-cols-1 gap-3 text-sm text-white md:grid-cols-2">
+                        <div>身体范围（A）：{selectedParsedValue.bodyRange}</div>
+                        <div>景别类型（B）：{selectedParsedValue.shotType}</div>
+                        <div>方位角（C）：{selectedParsedValue.orientation}</div>
+                        <div>构图方法（D）：{selectedParsedValue.compositionMethod}</div>
+                        <div>机位高度（E）：{selectedParsedValue.cameraHeight}</div>
+                        <div>眼睛状态：{selectedParsedValue.eyeStatus}</div>
+                        <div>嘴巴状态：{selectedParsedValue.mouthStatus}</div>
                       </div>
                     ) : (
                       <div className="text-sm text-amber-300">
-                        当前 value 无法解析为意图模版结构，请点击“修改”后重存。
+                        当前 value 无法解析为意图模版结构，请点击右上角“修改”后重新保存。
                       </div>
                     )}
                   </div>
+                ) : (
+                  <div className="rounded-xl bg-slate-900 p-4">{renderForm(draftForm, setDraftForm)}</div>
+                )}
+
+                {!isViewMode && (
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={backToList}
+                      className="rounded-xl border border-slate-600 px-4 py-2 text-sm text-slate-200 transition hover:bg-slate-700"
+                    >
+                      返回列表
+                    </button>
+                    <button
+                      onClick={() =>
+                        void (isCreateMode ? createTemplate() : selectedItem ? updateTemplate(selectedItem.key) : Promise.resolve())
+                      }
+                      disabled={saving}
+                      className={`rounded-xl px-4 py-2 text-sm text-white transition ${
+                        saving ? 'bg-slate-600' : 'bg-emerald-600 hover:bg-emerald-500'
+                      }`}
+                    >
+                      {saving ? '保存中...' : isCreateMode ? '确认新增' : '保存修改'}
+                    </button>
+                  </div>
                 )}
               </div>
-            );
-          })}
-        </div>
-
-        <div className="rounded-xl bg-slate-800 p-4 space-y-3">
-          <div className="text-slate-300">新增模版</div>
-          <div>
-            <label className="text-sm text-slate-300">模版名称（key）</label>
-            <input
-              type="text"
-              value={newKey}
-              onChange={event => setNewKey(event.target.value)}
-              className="mt-1 w-full rounded bg-slate-900 p-2 text-white outline-none"
-              placeholder="例如：portrait_intent_default"
-            />
+            )}
           </div>
-          {renderForm(newForm, setNewForm)}
-          <button
-            onClick={() => void createTemplate()}
-            disabled={saving}
-            className={`w-full rounded py-2 text-white ${saving ? 'bg-slate-600' : 'bg-emerald-600'}`}
-          >
-            新增
-          </button>
-        </div>
-
-        {error && <div className="text-sm text-red-400">{error}</div>}
+        )}
       </div>
     </div>
   );

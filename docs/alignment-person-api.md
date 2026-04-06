@@ -30,8 +30,8 @@
   "type": "alignment_person",
   "templateKey": "室内模版V1",
   "scene": "中近景",
-  "bodyRange": "肩部及以上",
-  "range": "髋部及以上",
+  "bodyRange": "胸部及以上",
+  "range": "腰部及以上",
   "ratioMin": "32",
   "ratioMax": "45",
   "orientation": "左侧45度",
@@ -50,9 +50,9 @@
 | `templateKey` | `string` | 是 | 当前选中的意图模版名称 |
 | `scene` | `string` | 是 | 由模版中的 `shotType` 解析得到，例如 `B1特写 -> 特写` |
 | `bodyRange` | `string` | 是 | 由模版中的 `bodyRange` 解析得到，例如 `A1头部 -> 头部` |
-| `range` | `string` | 是 | 由 `scene` 去查询 `shot_subject_ratio_table` 后得到的主体范围，例如 `B1特写 -> A1头部 -> 头部` |
-| `ratioMin` | `string` | 是 | 由 `scene` 去查询 `shot_subject_ratio_table` 后得到的最小比例 |
-| `ratioMax` | `string` | 是 | 由 `scene` 去查询 `shot_subject_ratio_table` 后得到的最大比例 |
+| `range` | `string` | 是 | 由 `scene + bodyRange` 去查询 `shot_subject_ratio_table` 后得到的主体范围，例如 `B2近景 + A2胸部及以上 -> A2胸部及以上 -> 胸部及以上` |
+| `ratioMin` | `string` | 是 | 由二维表单元格解析得到的最小比例 |
+| `ratioMax` | `string` | 是 | 由二维表单元格解析得到的最大比例 |
 | `orientation` | `string` | 是 | 由模版中的 `orientation` 解析得到，例如 `C1正脸 -> 正脸` |
 | `compositionMethod` | `string` | 是 | 由模版中的 `compositionMethod` 解析得到，例如 `D1居中构图 -> 居中构图` |
 | `cameraHeight` | `string` | 是 | 由模版中的 `cameraHeight` 解析得到，例如 `E4齐眼 -> 齐眼` |
@@ -103,7 +103,7 @@
 
 ### 5.3 景别与主体占比映射规则
 
-前端会根据意图模版中的 `shotType`，去配置服务读取：
+前端会根据意图模版中的 `shotType + bodyRange`，去配置服务读取：
 
 - `type = basic_config`
 - `key = shot_subject_ratio_table`
@@ -111,36 +111,47 @@
 该配置当前结构为：
 
 ```json
-[
-  { "scene": "B1特写", "range": "A1头部", "ratioMin": "50", "ratioMax": "60" },
-  { "scene": "B2近景", "range": "A2肩部及以上", "ratioMin": "45", "ratioMax": "60" },
-  { "scene": "B3中近景", "range": "A3髋部及以上", "ratioMin": "32", "ratioMax": "45" },
-  { "scene": "B4中景", "range": "A4膝部及以上", "ratioMin": "22", "ratioMax": "32" },
-  { "scene": "B6远景", "range": "A5全身", "ratioMin": "1", "ratioMax": "8" }
-]
+{
+  "B2近景": {
+    "A2胸部及以上": "50%"
+  },
+  "B3中近景": {
+    "A3腰部及以上": "40%"
+  },
+  "B4中景": {
+    "A4膝盖及以上": "30%",
+    "A5全身": "15%"
+  },
+  "B5远景": {
+    "A5全身": "<=5%"
+  }
+}
 ```
 
 匹配规则：
 
-1. 用模版中的 `shotType` 去匹配配置里的 `scene`
-2. 找到对应项后：
-   - `range` = 去掉编码前缀后的 `range`
-   - `ratioMin` = 配置中的 `ratioMin`
-   - `ratioMax` = 配置中的 `ratioMax`
+1. 用模版中的 `shotType` 去匹配配置里的行
+2. 用模版中的 `bodyRange` 去匹配配置里的列
+3. 找到对应项后：
+   - `range` = 去掉编码前缀后的列名
+   - `50%` 解析为 `ratioMin = 50, ratioMax = 50`
+   - `<=5%` 解析为 `ratioMin = 0, ratioMax = 5`
+   - `10-20%` 解析为 `ratioMin = 10, ratioMax = 20`
 
 例如：
 
-- 模版中 `shotType = B1特写`
-- 命中配置项 `{ "scene": "B1特写", "range": "A1头部", "ratioMin": "50", "ratioMax": "60" }`
+- 模版中 `shotType = B2近景`
+- 模版中 `bodyRange = A2胸部及以上`
+- 命中配置项 `B2近景 / A2胸部及以上 = 50%`
 
 最终得到：
 
 ```json
 {
-  "scene": "特写",
-  "range": "头部",
+  "scene": "近景",
+  "range": "胸部及以上",
   "ratioMin": "50",
-  "ratioMax": "60"
+  "ratioMax": "50"
 }
 ```
 
@@ -169,11 +180,11 @@
 {
   "type": "alignment_person",
   "templateKey": "portrait_intent_default",
-  "scene": "特写",
-  "bodyRange": "头部",
-  "range": "头部",
+  "scene": "近景",
+  "bodyRange": "胸部及以上",
+  "range": "胸部及以上",
   "ratioMin": "50",
-  "ratioMax": "60",
+  "ratioMax": "50",
   "orientation": "正脸",
   "compositionMethod": "居中构图",
   "cameraHeight": "齐眼",
@@ -187,6 +198,6 @@
 前端在提交前会做以下检查：
 
 1. 必须先选中一个意图模版
-2. 必须能根据模版中的 `shotType` 找到对应的 `shot_subject_ratio_table` 配置
+2. 必须能根据模版中的 `shotType + bodyRange` 找到对应的 `shot_subject_ratio_table` 配置
 
 若失败，前端不会发请求，并在页面上显示错误提示。

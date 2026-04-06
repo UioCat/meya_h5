@@ -47,6 +47,33 @@ type ShotRatioConfigItem = {
   ratioMax: string;
 };
 
+const parseShotRatioCellBounds = (value: string): { ratioMin: string; ratioMax: string } | null => {
+  const normalized = value.trim().replace(/\s+/g, '');
+  if (!normalized || normalized === '-') return null;
+
+  const lessEqualMatch = normalized.match(/^<=?(\d+(?:\.\d+)?)%?$/);
+  if (lessEqualMatch) {
+    return { ratioMin: '0', ratioMax: lessEqualMatch[1] };
+  }
+
+  const greaterEqualMatch = normalized.match(/^>=?(\d+(?:\.\d+)?)%?$/);
+  if (greaterEqualMatch) {
+    return { ratioMin: greaterEqualMatch[1], ratioMax: greaterEqualMatch[1] };
+  }
+
+  const rangeMatch = normalized.match(/^(\d+(?:\.\d+)?)%?[-~](\d+(?:\.\d+)?)%?$/);
+  if (rangeMatch) {
+    return { ratioMin: rangeMatch[1], ratioMax: rangeMatch[2] };
+  }
+
+  const exactMatch = normalized.match(/^(\d+(?:\.\d+)?)%?$/);
+  if (exactMatch) {
+    return { ratioMin: exactMatch[1], ratioMax: exactMatch[1] };
+  }
+
+  return null;
+};
+
 type AlignmentPersonPayload = {
   type: 'alignment_person';
   templateKey: string;
@@ -134,6 +161,24 @@ const parseShotRatioConfig = (value: unknown): ShotRatioConfigItem[] => {
     const [sceneName, configValue] = Object.entries(entry)[0] || [];
     if (!sceneName || !configValue || typeof configValue !== 'object') return;
     const configObj = configValue as Record<string, unknown>;
+    const matrixItems = Object.entries(configObj)
+      .filter(([, cellValue]) => typeof cellValue === 'string')
+      .map(([rangeName, cellValue]) => {
+        const bounds = parseShotRatioCellBounds(cellValue as string);
+        if (!bounds) return null;
+        return {
+          scene: normalizeOptionValue(sceneName),
+          range: normalizeOptionValue(rangeName),
+          ratioMin: bounds.ratioMin,
+          ratioMax: bounds.ratioMax
+        };
+      })
+      .filter((item): item is ShotRatioConfigItem => Boolean(item));
+    if (matrixItems.length > 0) {
+      items.push(...matrixItems);
+      return;
+    }
+
     items.push({
       scene: normalizeOptionValue(sceneName),
       range:
@@ -1041,15 +1086,31 @@ function LivePusher() {
       const shotRatioConfigs = await loadShotRatioConfigs();
       const matchedShotRatio = shotRatioConfigs.find(item => {
         const normalizedScene = normalizeOptionValue(item.scene);
+        const normalizedRange = normalizeOptionValue(item.range);
         const selectedShotType = normalizeOptionValue(selectedTemplate.shotType);
+        const selectedBodyRange = normalizeOptionValue(selectedTemplate.bodyRange);
         return (
-          normalizedScene === selectedShotType ||
-          stripOptionCode(normalizedScene) === stripOptionCode(selectedShotType)
+          (normalizedScene === selectedShotType ||
+            stripOptionCode(normalizedScene) === stripOptionCode(selectedShotType)) &&
+          (normalizedRange === selectedBodyRange ||
+            stripOptionCode(normalizedRange) === stripOptionCode(selectedBodyRange))
         );
       });
 
       if (!matchedShotRatio) {
-        throw new Error(`未找到景别类型 ${selectedTemplate.shotType} 对应的景别与主体占比配置`);
+        const fallbackShotRatio = shotRatioConfigs.find(item => {
+          const normalizedScene = normalizeOptionValue(item.scene);
+          const selectedShotType = normalizeOptionValue(selectedTemplate.shotType);
+          return (
+            normalizedScene === selectedShotType ||
+            stripOptionCode(normalizedScene) === stripOptionCode(selectedShotType)
+          );
+        });
+
+        if (!fallbackShotRatio) {
+          throw new Error(`未找到景别类型 ${selectedTemplate.shotType} 对应的景别与主体占比配置`);
+        }
+        throw new Error(`未找到景别类型 ${selectedTemplate.shotType} 与身体范围 ${selectedTemplate.bodyRange} 对应的主体占比配置`);
       }
 
       const concreteScene = stripOptionCode(selectedTemplate.shotType);
@@ -1268,7 +1329,7 @@ function LivePusher() {
 
 
   return (
-      <div className="min-h-screen bg-slate-900 px-4 pb-32 pt-4 sm:px-6 lg:pb-40 lg:pt-6">
+      <div className="min-h-screen bg-slate-900 px-4 pb-8 pt-4 sm:px-6 lg:pb-10 lg:pt-6">
         {notifyMessage && (
             <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
               <div className="max-w-[80vw] rounded-xl bg-black/75 px-6 py-3 text-lg font-semibold text-white">
@@ -1276,8 +1337,8 @@ function LivePusher() {
               </div>
             </div>
         )}
-        <div className="max-w-4xl mx-auto space-y-6">
-          <h1 className="text-3xl font-bold text-white">Meya</h1>
+        <div className="mx-auto max-w-4xl space-y-6">
+          <h1 className="text-center text-[1.75rem] font-bold tracking-[0.08em] text-white sm:text-[1.9rem]">Meya</h1>
 
           <div
               className={`bg-black rounded-xl relative overflow-hidden ${
