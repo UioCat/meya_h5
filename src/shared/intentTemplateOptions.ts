@@ -186,6 +186,12 @@ export const compositionParams = [
 
 export const eyeStatusOptions = ['闭眼', '一睁一闭', '睁眼'] as const;
 export const mouthStatusOptions = ['不笑', '微笑', '大笑'] as const;
+export const compositionObjectOptions = ['人体头部中心点', '双眼中心点'] as const;
+
+export const normalizeCompositionObjectValue = (value: string) => {
+  const normalized = normalizeOptionValue(value);
+  return normalized === '眼睛' ? '双眼中心点' : normalized;
+};
 
 export const buildBodyRangeOptions = (customItems: readonly BodyRangeConfigItem[] = []): BodyRangeOptionItem[] => {
   const customValues = new Set(defaultBodyRangeValues);
@@ -343,6 +349,7 @@ export const intentTemplateOptions = {
   orientation: compositionParams.find(param => param.key === 'C')?.options ?? [],
   compositionMethod: compositionParams.find(param => param.key === 'D')?.options ?? [],
   cameraHeight: compositionParams.find(param => param.key === 'E')?.options ?? [],
+  compositionObject: compositionObjectOptions,
   eyeStatus: eyeStatusOptions,
   mouthStatus: mouthStatusOptions
 } as const;

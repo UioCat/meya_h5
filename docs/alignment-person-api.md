@@ -36,6 +36,7 @@
   "ratioMax": "45",
   "orientation": "左侧45度",
   "compositionMethod": "居中构图",
+  "compositionObject": "双眼中心点",
   "cameraHeight": "齐肩",
   "eyeStatus": "睁眼",
   "mouthStatus": "不笑"
@@ -55,6 +56,7 @@
 | `ratioMax` | `string` | 是 | 由二维表单元格解析得到的最大比例 |
 | `orientation` | `string` | 是 | 由模版中的 `orientation` 解析得到，例如 `C1正脸 -> 正脸` |
 | `compositionMethod` | `string` | 是 | 由模版中的 `compositionMethod` 解析得到，例如 `D1居中构图 -> 居中构图` |
+| `compositionObject` | `string` | 是 | 模版中的构图对象，当前直接下发，例如 `双眼中心点` |
 | `cameraHeight` | `string` | 是 | 由模版中的 `cameraHeight` 解析得到，例如 `E4齐眼 -> 齐眼` |
 | `eyeStatus` | `string` | 是 | 模版中的眼睛状态，当前直接下发，例如 `睁眼` |
 | `mouthStatus` | `string` | 是 | 模版中的嘴巴状态，当前直接下发，例如 `微笑` |
@@ -71,6 +73,7 @@
   "shotType": "B1特写",
   "orientation": "C1正脸",
   "compositionMethod": "D1居中构图",
+  "compositionObject": "双眼中心点",
   "cameraHeight": "E4齐眼",
   "eyeStatus": "睁眼",
   "mouthStatus": "微笑"
@@ -100,6 +103,8 @@
 - `orientation`
 - `compositionMethod`
 - `cameraHeight`
+
+其中 `compositionObject` 不带编码，直接使用模版中的枚举值，例如 `双眼中心点` 或 `人体头部中心点`。
 
 ### 5.3 景别与主体占比映射规则
 
@@ -167,6 +172,7 @@
     "shotType": "B1特写",
     "orientation": "C1正脸",
     "compositionMethod": "D1居中构图",
+    "compositionObject": "双眼中心点",
     "cameraHeight": "E4齐眼",
     "eyeStatus": "睁眼",
     "mouthStatus": "微笑"
@@ -187,6 +193,7 @@
   "ratioMax": "50",
   "orientation": "正脸",
   "compositionMethod": "居中构图",
+  "compositionObject": "双眼中心点",
   "cameraHeight": "齐眼",
   "eyeStatus": "睁眼",
   "mouthStatus": "微笑"

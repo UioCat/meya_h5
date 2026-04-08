@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { Camera, ChevronUp, ChevronDown, Radio, Video, VideoOff } from 'lucide-react';
-import { intentTemplateOptions, normalizeOptionValue, stripOptionCode } from '../shared/intentTemplateOptions';
+import {
+  intentTemplateOptions,
+  normalizeCompositionObjectValue,
+  normalizeOptionValue,
+  stripOptionCode
+} from '../shared/intentTemplateOptions';
 
 declare global {
   interface Window {
@@ -19,6 +24,7 @@ type AlignmentTemplateValue = {
   shotType: string;
   orientation: string;
   compositionMethod: string;
+  compositionObject: string;
   cameraHeight: string;
   eyeStatus: string;
   mouthStatus: string;
@@ -84,6 +90,7 @@ type AlignmentPersonPayload = {
   ratioMax: string;
   orientation: string;
   compositionMethod: string;
+  compositionObject: string;
   cameraHeight: string;
   eyeStatus: string;
   mouthStatus: string;
@@ -102,6 +109,7 @@ const parseAlignmentTemplateValue = (value: unknown): AlignmentTemplateValue | n
     shotType: ['shotType', 'shot_type'],
     orientation: ['orientation'],
     compositionMethod: ['compositionMethod', 'composition_method'],
+    compositionObject: ['compositionObject', 'composition_object'],
     cameraHeight: ['cameraHeight', 'camera_height'],
     eyeStatus: ['eyeStatus', 'eye_status'],
     mouthStatus: ['mouthStatus', 'mouth_status']
@@ -117,9 +125,13 @@ const parseAlignmentTemplateValue = (value: unknown): AlignmentTemplateValue | n
         next[key] = intentTemplateOptions.cameraHeight[0] ?? '';
         continue;
       }
+      if (key === 'compositionObject') {
+        next[key] = intentTemplateOptions.compositionObject[1] ?? intentTemplateOptions.compositionObject[0] ?? '';
+        continue;
+      }
       return null;
     }
-    next[key] = normalizeOptionValue(rawValue);
+    next[key] = key === 'compositionObject' ? normalizeCompositionObjectValue(rawValue) : normalizeOptionValue(rawValue);
   }
   return next;
 };
@@ -237,7 +249,7 @@ function LivePusher() {
   const [spectatorHasAudio, setSpectatorHasAudio] = useState(true);
   const [spectatorHasVideo, setSpectatorHasVideo] = useState(true);
   const [spectatorLogs, setSpectatorLogs] = useState<string[]>([]);
-  const [personCenterPosition, setPersonCenterPosition] = useState('眼睛');
+  const [personCenterPosition, setPersonCenterPosition] = useState('双眼中心点');
   const [personCenterPositionOffsetPercent, setPersonCenterPositionOffsetPercent] = useState(3);
   const [alignmentTemplates, setAlignmentTemplates] = useState<AlignmentTemplateItem[]>([]);
   const [selectedAlignmentTemplateKey, setSelectedAlignmentTemplateKey] = useState('');
@@ -1120,7 +1132,7 @@ function LivePusher() {
       const concreteCompositionMethod = stripOptionCode(selectedTemplate.compositionMethod);
       const concreteCameraHeight = stripOptionCode(selectedTemplate.cameraHeight);
 
-      setPersonCenterPosition(concreteRange || concreteBodyRange);
+      setPersonCenterPosition(selectedTemplate.compositionObject);
       setPersonCenterPositionOffsetPercent(3);
 
       const requestBody: AlignmentPersonPayload = {
@@ -1133,6 +1145,7 @@ function LivePusher() {
         ratioMax: matchedShotRatio.ratioMax,
         orientation: concreteOrientation,
         compositionMethod: concreteCompositionMethod,
+        compositionObject: selectedTemplate.compositionObject,
         cameraHeight: concreteCameraHeight,
         eyeStatus: selectedTemplate.eyeStatus,
         mouthStatus: selectedTemplate.mouthStatus
@@ -1903,6 +1916,7 @@ function LivePusher() {
                           <div>景别类型（B）：{selectedAlignmentTemplate.value.shotType}</div>
                           <div>方位角（C）：{selectedAlignmentTemplate.value.orientation}</div>
                           <div>构图方法（D）：{selectedAlignmentTemplate.value.compositionMethod}</div>
+                          <div>构图对象：{selectedAlignmentTemplate.value.compositionObject}</div>
                           <div>机位高度（E）：{selectedAlignmentTemplate.value.cameraHeight}</div>
                           <div>眼睛状态：{selectedAlignmentTemplate.value.eyeStatus}</div>
                           <div>嘴巴状态：{selectedAlignmentTemplate.value.mouthStatus}</div>

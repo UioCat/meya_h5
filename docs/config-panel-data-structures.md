@@ -331,6 +331,7 @@
   "shotType": "B1特写",
   "orientation": "C1正脸",
   "compositionMethod": "D1居中构图",
+  "compositionObject": "双眼中心点",
   "cameraHeight": "E4齐眼",
   "eyeStatus": "睁眼",
   "mouthStatus": "微笑"
@@ -352,6 +353,7 @@
     "shotType": "B1特写",
     "orientation": "C1正脸",
     "compositionMethod": "D1居中构图",
+    "compositionObject": "双眼中心点",
     "cameraHeight": "E4齐眼",
     "eyeStatus": "睁眼",
     "mouthStatus": "微笑"
@@ -364,13 +366,14 @@
 - `景别类型（B）`：读取“一、构图关键参数”中的 B 选项
 - `方位角（C）`：读取“一、构图关键参数”中的 C 选项
 - `构图方法（D）`：读取“一、构图关键参数”中的 D 选项
+- `构图对象`：当前使用固定枚举 `人体头部中心点 / 双眼中心点`
 - `机位高度（E）`：读取“一、构图关键参数”中的 E 选项
 - `眼睛状态`：当前使用固定枚举 `闭眼 / 一睁一闭 / 睁眼`
 - `嘴巴状态`：当前使用固定枚举 `不笑 / 微笑 / 大笑`
 
 保存校验：
-- 7 个字段都必须有值
-- 7 个字段的值都必须在各自下拉可选范围内
+- 8 个字段都必须有值
+- 8 个字段的值都必须在各自下拉可选范围内
 
 对准-人模式提交转换示例：
 - 当意图模版中 `shotType = "B2近景"` 且 `bodyRange = "A2胸部及以上"` 时，前端会去读取 `shot_subject_ratio_table`
@@ -388,6 +391,7 @@
   "ratioMax": "50",
   "orientation": "正脸",
   "compositionMethod": "居中构图",
+  "compositionObject": "双眼中心点",
   "cameraHeight": "齐眼",
   "eyeStatus": "睁眼",
   "mouthStatus": "微笑"

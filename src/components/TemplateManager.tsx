@@ -1,12 +1,13 @@
 import { ArrowLeft, Eye, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { intentTemplateOptions, normalizeOptionValue } from '../shared/intentTemplateOptions';
+import { intentTemplateOptions, normalizeCompositionObjectValue, normalizeOptionValue } from '../shared/intentTemplateOptions';
 
 type IntentTemplateFields = {
   bodyRange: string;
   shotType: string;
   orientation: string;
   compositionMethod: string;
+  compositionObject: string;
   cameraHeight: string;
   eyeStatus: string;
   mouthStatus: string;
@@ -47,6 +48,7 @@ const createDefaultFields = (
   shotType: shotTypeOptions[0] ?? '',
   orientation: intentTemplateOptions.orientation[0] ?? '',
   compositionMethod: intentTemplateOptions.compositionMethod[0] ?? '',
+  compositionObject: intentTemplateOptions.compositionObject[1] ?? intentTemplateOptions.compositionObject[0] ?? '',
   cameraHeight: intentTemplateOptions.cameraHeight[0] ?? '',
   eyeStatus: intentTemplateOptions.eyeStatus[0] ?? '',
   mouthStatus: intentTemplateOptions.mouthStatus[0] ?? ''
@@ -60,6 +62,7 @@ const createFieldConfig = (
   { key: 'shotType', label: '景别类型（B）', options: shotTypeOptions },
   { key: 'orientation', label: '方位角（C）', options: intentTemplateOptions.orientation },
   { key: 'compositionMethod', label: '构图方法（D）', options: intentTemplateOptions.compositionMethod },
+  { key: 'compositionObject', label: '构图对象', options: intentTemplateOptions.compositionObject },
   { key: 'cameraHeight', label: '机位高度（E）', options: intentTemplateOptions.cameraHeight },
   { key: 'eyeStatus', label: '眼睛状态', options: intentTemplateOptions.eyeStatus },
   { key: 'mouthStatus', label: '嘴巴状态', options: intentTemplateOptions.mouthStatus }
@@ -111,13 +114,16 @@ const parseTemplateValue = (
           .replace(/[A-Z]/g, match => `_${match.toLowerCase()}`)
       ];
     if (typeof rawValue !== 'string') {
-      if (field.key === 'cameraHeight') {
-        next[field.key] = defaultFields.cameraHeight;
+      if (field.key === 'cameraHeight' || field.key === 'compositionObject') {
+        next[field.key] = defaultFields[field.key];
         continue;
       }
       return null;
     }
-    const normalizedValue = normalizeOptionValue(rawValue);
+    const normalizedValue =
+      field.key === 'compositionObject'
+        ? normalizeCompositionObjectValue(rawValue)
+        : normalizeOptionValue(rawValue);
     const isKnownValue = (field.options as readonly string[]).includes(normalizedValue);
     if (!isKnownValue) {
       return null;
@@ -445,7 +451,7 @@ function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-base font-medium text-white">{item.key}</div>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                            <span>updated_at: {formatTime(item.updated_at)}</span>
+                            <span>更新时间：{formatTime(item.updated_at)}</span>
                             {!parsedValue && (
                               <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300">待修复</span>
                             )}
@@ -538,7 +544,7 @@ function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }
                     placeholder="例如：portrait_intent_default"
                   />
                   {!isCreateMode && selectedItem && (
-                    <div className="mt-2 text-xs text-slate-400">updated_at: {formatTime(selectedItem.updated_at)}</div>
+                    <div className="mt-2 text-xs text-slate-400">更新时间：{formatTime(selectedItem.updated_at)}</div>
                   )}
                 </div>
 
@@ -550,6 +556,7 @@ function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }
                         <div>景别类型（B）：{selectedParsedValue.shotType}</div>
                         <div>方位角（C）：{selectedParsedValue.orientation}</div>
                         <div>构图方法（D）：{selectedParsedValue.compositionMethod}</div>
+                        <div>构图对象：{selectedParsedValue.compositionObject}</div>
                         <div>机位高度（E）：{selectedParsedValue.cameraHeight}</div>
                         <div>眼睛状态：{selectedParsedValue.eyeStatus}</div>
                         <div>嘴巴状态：{selectedParsedValue.mouthStatus}</div>
