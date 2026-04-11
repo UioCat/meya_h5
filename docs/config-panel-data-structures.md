@@ -377,7 +377,9 @@
 
 对准-人模式提交转换示例：
 - 当意图模版中 `shotType = "B2近景"` 且 `bodyRange = "A2胸部及以上"` 时，前端会去读取 `shot_subject_ratio_table`
-- 找到对应 `scene = "B2近景"`、`range = "A2胸部及以上"` 的单元格后，转换出具体参数再发送
+- 找到对应 `scene = "B2近景"`、`range = "A2胸部及以上"` 的单元格后，先确认这组景别与身体范围有效
+- 然后前端会再去读取 `subject_ratio_score_table`，用同一组 `scene = "B2近景"`、`range = "A2胸部及以上"` 取区间值
+- 命中 `{ "min": 45, "max": 60 }` 后，提交时会发送 `ratioMin = "45"`、`ratioMax = "60"`
 
 示例提交体：
 ```json
@@ -386,9 +388,8 @@
   "templateKey": "portrait_intent_default",
   "scene": "近景",
   "bodyRange": "胸部及以上",
-  "range": "胸部及以上",
-  "ratioMin": "50",
-  "ratioMax": "50",
+  "ratioMin": "45",
+  "ratioMax": "60",
   "orientation": "正脸",
   "compositionMethod": "居中构图",
   "compositionObject": "双眼中心点",
