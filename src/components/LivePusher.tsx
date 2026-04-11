@@ -53,6 +53,208 @@ type ShotRatioConfigItem = {
   ratioMax: string;
 };
 
+type SubjectRatioScoreConfigItem = {
+  scene: string;
+  range: string;
+  ratioMin: string;
+  ratioMax: string;
+};
+
+const CENTER_ALIGNMENT_GUIDE_VIEWBOX = 300;
+
+const CENTER_ALIGNMENT_GUIDE_TOP_LABELS = [
+  { label: 'V0', x: 6, y: 10, anchor: 'start' as const, muted: false },
+  { label: 'V1', x: 100, y: 10, anchor: 'middle' as const, muted: false },
+  { label: 'V1.5', x: 150, y: 10, anchor: 'middle' as const, muted: true },
+  { label: 'V2', x: 200, y: 10, anchor: 'middle' as const, muted: false },
+  { label: 'V2.75', x: 275, y: 10, anchor: 'middle' as const, muted: true },
+  { label: 'V3', x: 294, y: 10, anchor: 'end' as const, muted: false }
+];
+
+const CENTER_ALIGNMENT_GUIDE_LEFT_LABELS = [
+  { label: 'H0', y: 6, percent: '', muted: false },
+  { label: 'H0.5', y: 50, percent: '50%', muted: true },
+  { label: 'H1', y: 100, percent: '', muted: false },
+  { label: 'H1.33', y: 133, percent: '30%', muted: true },
+  { label: 'H1.66', y: 166, percent: '', muted: true },
+  { label: 'H2', y: 200, percent: '', muted: false },
+  { label: 'H2.25', y: 225, percent: '25%', muted: true },
+  { label: 'H2.5', y: 250, percent: '', muted: true },
+  { label: 'H3', y: 294, percent: '', muted: false }
+];
+
+const CENTER_ALIGNMENT_GUIDE_POINTS = [
+  { label: 'H0.5V1.5', x: 150, y: 50, dx: -8, dy: -10, anchor: 'end' as const },
+  { label: 'H1V1', x: 100, y: 100, dx: -2, dy: -10, anchor: 'end' as const },
+  { label: 'H1V2', x: 200, y: 100, dx: 2, dy: -10, anchor: 'start' as const },
+  { label: 'H2V1', x: 100, y: 200, dx: -2, dy: -10, anchor: 'end' as const },
+  { label: 'H2V2', x: 200, y: 200, dx: 2, dy: -10, anchor: 'start' as const },
+  { label: 'H2.25V2.75', x: 275, y: 225, dx: -2, dy: 6, anchor: 'end' as const }
+];
+
+const CAMERA_HEIGHT_RANGE_GUIDE_TARGETS: Record<string, number> = {
+  齐眼: 50 / CENTER_ALIGNMENT_GUIDE_VIEWBOX,
+  齐肩: 100 / CENTER_ALIGNMENT_GUIDE_VIEWBOX,
+  齐髋: 200 / CENTER_ALIGNMENT_GUIDE_VIEWBOX,
+  齐膝: 225 / CENTER_ALIGNMENT_GUIDE_VIEWBOX
+};
+
+const HEIGHT_STAGE_RANGE_HALF_RATIO = 0.035;
+
+function CenterAlignmentGuideOverlay() {
+  return (
+    <div className="absolute inset-0 pointer-events-none select-none">
+      <svg
+        className="h-full w-full"
+        viewBox={`0 0 ${CENTER_ALIGNMENT_GUIDE_VIEWBOX} ${CENTER_ALIGNMENT_GUIDE_VIEWBOX}`}
+        preserveAspectRatio="none"
+      >
+        <rect
+          x="0"
+          y="0"
+          width={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
+          height={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
+          fill="none"
+          stroke="rgba(255,255,255,0.72)"
+          strokeWidth="1.25"
+          vectorEffect="non-scaling-stroke"
+        />
+
+        {[100, 200].map(x => (
+          <line
+            key={`solid-v-${x}`}
+            x1={x}
+            y1="0"
+            x2={x}
+            y2={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
+            stroke="rgba(255,255,255,0.48)"
+            strokeWidth="1"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+        {[100, 200].map(y => (
+          <line
+            key={`solid-h-${y}`}
+            x1="0"
+            y1={y}
+            x2={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
+            y2={y}
+            stroke="rgba(255,255,255,0.48)"
+            strokeWidth="1"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+
+        {[150, 275].map(x => (
+          <line
+            key={`dash-v-${x}`}
+            x1={x}
+            y1="0"
+            x2={x}
+            y2={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
+            stroke="rgba(255,255,255,0.34)"
+            strokeWidth="1"
+            strokeDasharray="4 4"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+        {[50, 133, 166, 225, 250].map(y => (
+          <line
+            key={`dash-h-${y}`}
+            x1="0"
+            y1={y}
+            x2={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
+            y2={y}
+            stroke="rgba(255,255,255,0.34)"
+            strokeWidth="1"
+            strokeDasharray="4 4"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+
+        {CENTER_ALIGNMENT_GUIDE_TOP_LABELS.map(item => (
+          <text
+            key={item.label}
+            x={item.x}
+            y={item.y}
+            textAnchor={item.anchor}
+            dominantBaseline="hanging"
+            fontSize="9"
+            fontWeight={item.muted ? '500' : '600'}
+            fill={item.muted ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.86)'}
+            paintOrder="stroke"
+            stroke="rgba(15,23,42,0.82)"
+            strokeWidth="1"
+          >
+            {item.label}
+          </text>
+        ))}
+
+        {CENTER_ALIGNMENT_GUIDE_LEFT_LABELS.map(item => (
+          <g key={item.label}>
+            <text
+              x="6"
+              y={item.y}
+              textAnchor="start"
+              dominantBaseline="middle"
+              fontSize="9"
+              fontWeight={item.muted ? '500' : '600'}
+              fill={item.muted ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.86)'}
+              paintOrder="stroke"
+              stroke="rgba(15,23,42,0.82)"
+              strokeWidth="1"
+            >
+              {item.label}
+            </text>
+            {item.percent ? (
+              <text
+                x="6"
+                y={item.y + 7}
+                textAnchor="start"
+                dominantBaseline="middle"
+                fontSize="6"
+                fill="rgba(255,255,255,0.42)"
+                paintOrder="stroke"
+                stroke="rgba(15,23,42,0.82)"
+                strokeWidth="0.8"
+              >
+                {item.percent}
+              </text>
+            ) : null}
+          </g>
+        ))}
+
+        {CENTER_ALIGNMENT_GUIDE_POINTS.map(point => (
+          <g key={point.label}>
+            <circle
+              cx={point.x}
+              cy={point.y}
+              r="1.75"
+              fill="#7dd3fc"
+              stroke="rgba(15,23,42,0.92)"
+              strokeWidth="0.8"
+              vectorEffect="non-scaling-stroke"
+            />
+            <text
+              x={point.x + point.dx}
+              y={point.y + point.dy}
+              textAnchor={point.anchor}
+              dominantBaseline="middle"
+              fontSize="8"
+              fill="rgba(255,255,255,0.86)"
+              paintOrder="stroke"
+              stroke="rgba(15,23,42,0.88)"
+              strokeWidth="1"
+            >
+              {point.label}
+            </text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 const parseShotRatioCellBounds = (value: string): { ratioMin: string; ratioMax: string } | null => {
   const normalized = value.trim().replace(/\s+/g, '');
   if (!normalized || normalized === '-') return null;
@@ -80,12 +282,28 @@ const parseShotRatioCellBounds = (value: string): { ratioMin: string; ratioMax: 
   return null;
 };
 
+const parseSubjectRatioScoreBounds = (value: string): { ratioMin: string; ratioMax: string } | null => {
+  const normalized = value.trim().replace(/\s+/g, '');
+  if (!normalized || normalized === '-') return null;
+
+  const bracketMatch = normalized.match(/^[\(\[]?(\d+(?:\.\d+)?)%?,(\d+(?:\.\d+)?)%?[\]\)]?$/);
+  if (bracketMatch) {
+    return { ratioMin: bracketMatch[1], ratioMax: bracketMatch[2] };
+  }
+
+  const rangeMatch = normalized.match(/^(\d+(?:\.\d+)?)%?[-~](\d+(?:\.\d+)?)%?$/);
+  if (rangeMatch) {
+    return { ratioMin: rangeMatch[1], ratioMax: rangeMatch[2] };
+  }
+
+  return null;
+};
+
 type AlignmentPersonPayload = {
   type: 'alignment_person';
   templateKey: string;
   scene: string;
   bodyRange: string;
-  range: string;
   ratioMin: string;
   ratioMax: string;
   orientation: string;
@@ -143,11 +361,13 @@ const parseShotRatioConfig = (value: unknown): ShotRatioConfigItem[] => {
   }
 
   const items: ShotRatioConfigItem[] = [];
-  if (!Array.isArray(source)) {
+  if (!source || typeof source !== 'object') {
     return items;
   }
 
-  source.forEach(item => {
+  const sourceEntries = Array.isArray(source) ? source : Object.entries(source).map(([scene, config]) => ({ [scene]: config }));
+
+  sourceEntries.forEach(item => {
     if (!item || typeof item !== 'object') return;
     const entry = item as Record<string, unknown>;
 
@@ -222,6 +442,8 @@ function LivePusher() {
   const ALIGNMENT_TEMPLATE_TYPE = 'intent_template';
   const SHOT_RATIO_CONFIG_TYPE = 'basic_config';
   const SHOT_RATIO_CONFIG_KEY = 'shot_subject_ratio_table';
+  const SUBJECT_RATIO_SCORE_CONFIG_TYPE = 'basic_config';
+  const SUBJECT_RATIO_SCORE_CONFIG_KEY = 'subject_ratio_score_table';
   const CONFIG_SERVER_BASE_URL = 'https://www.uiofield.top/config_server';
   const isRearCameraLabel = (label?: string) =>
       /back|rear|environment|后置|后摄|主摄/i.test(label || '');
@@ -251,6 +473,10 @@ function LivePusher() {
   const [spectatorLogs, setSpectatorLogs] = useState<string[]>([]);
   const [personCenterPosition, setPersonCenterPosition] = useState('双眼中心点');
   const [personCenterPositionOffsetPercent, setPersonCenterPositionOffsetPercent] = useState(3);
+  const [currentStage, setCurrentStage] = useState('');
+  const [currentStageCode, setCurrentStageCode] = useState('');
+  const [alignmentCameraHeight, setAlignmentCameraHeight] = useState('');
+  const [alignmentRunCompleted, setAlignmentRunCompleted] = useState(false);
   const [alignmentTemplates, setAlignmentTemplates] = useState<AlignmentTemplateItem[]>([]);
   const [selectedAlignmentTemplateKey, setSelectedAlignmentTemplateKey] = useState('');
   const [alignmentTemplateLoading, setAlignmentTemplateLoading] = useState(false);
@@ -310,6 +536,54 @@ function LivePusher() {
           : currentAlgoType === 'alignment_person'
               ? '对准-人'
               : '未识别';
+  const captureScrollTop = () => {
+      const scrollingElement = document.scrollingElement;
+      if (scrollingElement) {
+        return scrollingElement.scrollTop;
+      }
+      return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+  };
+  const restoreScrollTop = (top: number) => {
+      const apply = () => {
+        const scrollingElement = document.scrollingElement;
+        if (scrollingElement) {
+          scrollingElement.scrollTop = top;
+        }
+        window.scrollTo({ top, behavior: 'auto' });
+      };
+      apply();
+      window.requestAnimationFrame(apply);
+      window.setTimeout(apply, 0);
+  };
+  const hasAlignmentAnalysis =
+      Boolean(rawInfo?.bbox) ||
+      Boolean(rawInfo?.centerPoint) ||
+      rawInfo?.ratio !== undefined ||
+      rawInfo?.yaw !== undefined;
+  const effectiveAlignmentCameraHeight = alignmentCameraHeight ||
+      (selectedAlignmentTemplate ? stripOptionCode(selectedAlignmentTemplate.value.cameraHeight) : '');
+  const heightGuideTargetRatio = effectiveAlignmentCameraHeight
+      ? CAMERA_HEIGHT_RANGE_GUIDE_TARGETS[effectiveAlignmentCameraHeight] ?? null
+      : null;
+  const isActiveAlignmentRun =
+      activeMode === 'alignment_person' &&
+      currentAlgoType === 'alignment_person' &&
+      !alignmentRunCompleted;
+  const isHeightAlignmentStage =
+      isActiveAlignmentRun &&
+      (currentStage === '定高' || (currentStageCode ? /height/i.test(currentStageCode) : false));
+  const isCenterAlignmentStage =
+      isActiveAlignmentRun &&
+      (currentStage === '中心点对准' || (currentStageCode ? /center/i.test(currentStageCode) : false));
+  const shouldShowAnalysisPanel =
+      (isActiveAlignmentRun &&
+        (Boolean(currentStage) || hasAlignmentAnalysis)) ||
+      (activeMode === 'image_search' &&
+        currentAlgoType === 'upload_template' &&
+        Boolean(imageSearchInfo));
+  const shouldShowCenterAlignmentGuide = isCenterAlignmentStage;
+  const shouldShowHeightRangeGuide = isHeightAlignmentStage && heightGuideTargetRatio !== null;
+  const shouldShowCenterPointMarkers = isCenterAlignmentStage;
 
   const pusherRef = useRef<any>(null);
   const deviceManagerRef = useRef<any>(null);
@@ -318,7 +592,7 @@ function LivePusher() {
   const WS_SERVER = "wss://www.uiofield.top/meya/ws";
   const WEB_SERVER = "https://www.uiofield.top/meya/push"
   const PUSH_URL =
-      'webrtc://226975.push.tlivecloud.com/live/stream?txSecret=693abaae6e8346597f7e6c9d30cab682&txTime=69CABA52';
+      'webrtc://226975.push.tlivecloud.com/live/stream?txSecret=62791f098ea16d00daa28f400468f262&txTime=6A433AFC';
 
   /** 浏览器兼容性检测 */
   // useEffect(() => {
@@ -404,17 +678,36 @@ function LivePusher() {
             setImageSearchInfo(null);
             setMoveGuide(null);
             setTaskOffNotice(false);
+            setCurrentStage('');
+            setCurrentStageCode('');
+            setAlignmentCameraHeight('');
+            setAlignmentRunCompleted(false);
           }
           if (incomingAlgoType) {
             currentAlgoTypeRef.current = incomingAlgoType;
             setCurrentAlgoType(incomingAlgoType);
           }
           const effectiveAlgoType = incomingAlgoType || currentAlgoTypeRef.current;
+          const isAlignmentDoneMessage =
+              effectiveAlgoType === 'alignment_person' && parsed?.type === 'alignment_done';
 
-          if (parsed?.type === 'alignment_done') {
+          if (effectiveAlgoType === 'alignment_person' && !isAlignmentDoneMessage) {
+            setAlignmentRunCompleted(false);
+            if (typeof parsed?.currentStage === 'string' && parsed.currentStage.trim()) {
+              setCurrentStage(parsed.currentStage.trim());
+            }
+            if (typeof parsed?.currentStageCode === 'string' && parsed.currentStageCode.trim()) {
+              setCurrentStageCode(parsed.currentStageCode.trim());
+            }
+          }
+
+          if (isAlignmentDoneMessage) {
             setRawInfo(null);
             setImageSearchInfo(null);
             setMoveGuide(null);
+            setCurrentStage('');
+            setCurrentStageCode('');
+            setAlignmentRunCompleted(true);
           }
 
           if (parsed?.command === 'task_off') {
@@ -426,7 +719,7 @@ function LivePusher() {
               setTaskOffNotice(false);
             }, 1000);
           }
-          if (parsed?.command === 'move' && parsed?.param) {
+          if (!isAlignmentDoneMessage && parsed?.command === 'move' && parsed?.param) {
             setMoveGuide({
               pitch: parsed.param.pitch,
               roll: parsed.param.roll,
@@ -435,7 +728,7 @@ function LivePusher() {
             });
           }
 
-          if (parsed?.command === 'adjust' && parsed?.param) {
+          if (!isAlignmentDoneMessage && parsed?.command === 'adjust' && parsed?.param) {
             setMoveGuide({
               pitch: undefined,
               roll: undefined,
@@ -444,7 +737,7 @@ function LivePusher() {
             });
           }
 
-          if (parsed && parsed.type === 'move') {
+          if (!isAlignmentDoneMessage && parsed && parsed.type === 'move') {
             // 兼容旧协议（type=move, move/raw）
             if (parsed.move) {
               setMoveGuide(prev => ({
@@ -497,7 +790,7 @@ function LivePusher() {
               });
             }
 
-            if (effectiveAlgoType === 'alignment_person') {
+            if (effectiveAlgoType === 'alignment_person' && !isAlignmentDoneMessage) {
               const nextRaw: {
                 ratio?: number;
                 bbox?: [number, number, number, number];
@@ -622,7 +915,8 @@ function LivePusher() {
     setAlignmentError('');
     try {
       const resp = await fetch(
-          `${CONFIG_SERVER_BASE_URL}/kvs?type=${encodeURIComponent(ALIGNMENT_TEMPLATE_TYPE)}`
+          `${CONFIG_SERVER_BASE_URL}/kvs?type=${encodeURIComponent(ALIGNMENT_TEMPLATE_TYPE)}&t=${Date.now()}`,
+          { cache: 'no-store' }
       );
       const text = await resp.text();
       const data = parseJsonSafely(text) as { items?: Array<{ key?: string; value?: unknown; updated_at?: number }> } | null;
@@ -663,7 +957,8 @@ function LivePusher() {
 
   const loadShotRatioConfigs = async () => {
     const resp = await fetch(
-      `${CONFIG_SERVER_BASE_URL}/kv?type=${encodeURIComponent(SHOT_RATIO_CONFIG_TYPE)}&key=${encodeURIComponent(SHOT_RATIO_CONFIG_KEY)}`
+      `${CONFIG_SERVER_BASE_URL}/kv?type=${encodeURIComponent(SHOT_RATIO_CONFIG_TYPE)}&key=${encodeURIComponent(SHOT_RATIO_CONFIG_KEY)}&t=${Date.now()}`,
+      { cache: 'no-store' }
     );
     const text = await resp.text();
     const data = parseJsonSafely(text) as { value?: unknown; error?: string } | null;
@@ -676,10 +971,118 @@ function LivePusher() {
     return parseShotRatioConfig(data?.value);
   };
 
+  const parseSubjectRatioScoreConfigs = (value: unknown): SubjectRatioScoreConfigItem[] => {
+    let source = value;
+    if (typeof source === 'string') {
+      source = parseJsonSafely(source);
+    }
+
+    const items: SubjectRatioScoreConfigItem[] = [];
+    if (!source || typeof source !== 'object') {
+      return items;
+    }
+
+    if (Array.isArray(source)) {
+      source.forEach(item => {
+        if (!item || typeof item !== 'object') return;
+        const entry = item as Record<string, unknown>;
+        const scene =
+          typeof entry.scene === 'string' || typeof entry.scene === 'number'
+            ? normalizeOptionValue(String(entry.scene))
+            : '';
+        const range =
+          typeof entry.range === 'string' || typeof entry.range === 'number'
+            ? normalizeOptionValue(String(entry.range))
+            : '';
+        const ratioMin =
+          typeof entry.min === 'number' || typeof entry.min === 'string'
+            ? String(entry.min).trim()
+            : typeof entry.ratioMin === 'number' || typeof entry.ratioMin === 'string'
+              ? String(entry.ratioMin).trim()
+              : '';
+        const ratioMax =
+          typeof entry.max === 'number' || typeof entry.max === 'string'
+            ? String(entry.max).trim()
+            : typeof entry.ratioMax === 'number' || typeof entry.ratioMax === 'string'
+              ? String(entry.ratioMax).trim()
+              : '';
+        if (!scene || !range || !ratioMin || !ratioMax) return;
+        items.push({ scene, range, ratioMin, ratioMax });
+      });
+      return items;
+    }
+
+    Object.entries(source).forEach(([sceneName, rangesValue]) => {
+      if (!rangesValue || typeof rangesValue !== 'object') return;
+      const rangesObj = rangesValue as Record<string, unknown>;
+      Object.entries(rangesObj).forEach(([rangeName, cellValue]) => {
+        if (typeof cellValue === 'string') {
+          const bounds = parseSubjectRatioScoreBounds(cellValue);
+          if (!bounds) return;
+          items.push({
+            scene: normalizeOptionValue(sceneName),
+            range: normalizeOptionValue(rangeName),
+            ratioMin: bounds.ratioMin,
+            ratioMax: bounds.ratioMax
+          });
+          return;
+        }
+
+        if (!cellValue || typeof cellValue !== 'object') return;
+        const cellObj = cellValue as Record<string, unknown>;
+        const ratioMin =
+          typeof cellObj.min === 'number' || typeof cellObj.min === 'string'
+            ? String(cellObj.min).trim()
+            : typeof cellObj.ratioMin === 'number' || typeof cellObj.ratioMin === 'string'
+              ? String(cellObj.ratioMin).trim()
+              : '';
+        const ratioMax =
+          typeof cellObj.max === 'number' || typeof cellObj.max === 'string'
+            ? String(cellObj.max).trim()
+            : typeof cellObj.ratioMax === 'number' || typeof cellObj.ratioMax === 'string'
+              ? String(cellObj.ratioMax).trim()
+              : '';
+        if (!ratioMin || !ratioMax) return;
+        items.push({
+          scene: normalizeOptionValue(sceneName),
+          range: normalizeOptionValue(rangeName),
+          ratioMin,
+          ratioMax
+        });
+      });
+    });
+
+    return items;
+  };
+
+  const loadSubjectRatioScoreConfigs = async () => {
+    const resp = await fetch(
+      `${CONFIG_SERVER_BASE_URL}/kv?type=${encodeURIComponent(SUBJECT_RATIO_SCORE_CONFIG_TYPE)}&key=${encodeURIComponent(SUBJECT_RATIO_SCORE_CONFIG_KEY)}&t=${Date.now()}`,
+      { cache: 'no-store' }
+    );
+    const text = await resp.text();
+    const data = parseJsonSafely(text) as { value?: unknown; error?: string } | null;
+    if (!resp.ok) {
+      if (resp.status === 404) {
+        return [] as SubjectRatioScoreConfigItem[];
+      }
+      throw new Error((data && typeof data.error === 'string' && data.error) || `获取主体占比评价标准失败（HTTP ${resp.status}）`);
+    }
+    return parseSubjectRatioScoreConfigs(data?.value);
+  };
+
   useEffect(() => {
     if (activeMode === 'alignment_person') {
       void loadAlignmentTemplates();
     }
+  }, [activeMode]);
+
+  useEffect(() => {
+    if (activeMode === 'alignment_person') return;
+    setCurrentStage('');
+    setCurrentStageCode('');
+    setAlignmentCameraHeight('');
+    setAlignmentRunCompleted(false);
   }, [activeMode]);
 
   useEffect(() => {
@@ -1084,18 +1487,27 @@ function LivePusher() {
   };
 
   const handleSubmitAlignmentPerson = async () => {
+    const scrollTopBeforeSubmit = captureScrollTop();
     setAlignmentError('');
     // 重新提交任务时清空画面提示
     setRawInfo(null);
     setMoveGuide(null);
     setTaskOffNotice(false);
+    setCurrentStage('');
+    setCurrentStageCode('');
+    setAlignmentCameraHeight('');
+    setAlignmentRunCompleted(false);
+    restoreScrollTop(scrollTopBeforeSubmit);
     try {
       if (!selectedAlignmentTemplate) {
         throw new Error('请先选择模版');
       }
 
       const selectedTemplate = selectedAlignmentTemplate.value;
-      const shotRatioConfigs = await loadShotRatioConfigs();
+      const [shotRatioConfigs, subjectRatioScoreConfigs] = await Promise.all([
+        loadShotRatioConfigs(),
+        loadSubjectRatioScoreConfigs()
+      ]);
       const matchedShotRatio = shotRatioConfigs.find(item => {
         const normalizedScene = normalizeOptionValue(item.scene);
         const normalizedRange = normalizeOptionValue(item.range);
@@ -1125,24 +1537,52 @@ function LivePusher() {
         throw new Error(`未找到景别类型 ${selectedTemplate.shotType} 与身体范围 ${selectedTemplate.bodyRange} 对应的主体占比配置`);
       }
 
+      const matchedSubjectRatioScore = subjectRatioScoreConfigs.find(item => {
+        const normalizedScene = normalizeOptionValue(item.scene);
+        const normalizedRange = normalizeOptionValue(item.range);
+        const selectedShotType = normalizeOptionValue(selectedTemplate.shotType);
+        const selectedBodyRange = normalizeOptionValue(selectedTemplate.bodyRange);
+        return (
+          (normalizedScene === selectedShotType ||
+            stripOptionCode(normalizedScene) === stripOptionCode(selectedShotType)) &&
+          (normalizedRange === selectedBodyRange ||
+            stripOptionCode(normalizedRange) === stripOptionCode(selectedBodyRange))
+        );
+      });
+
+      if (!matchedSubjectRatioScore) {
+        const fallbackSubjectRatioScore = subjectRatioScoreConfigs.find(item => {
+          const normalizedScene = normalizeOptionValue(item.scene);
+          const selectedShotType = normalizeOptionValue(selectedTemplate.shotType);
+          return (
+            normalizedScene === selectedShotType ||
+            stripOptionCode(normalizedScene) === stripOptionCode(selectedShotType)
+          );
+        });
+
+        if (!fallbackSubjectRatioScore) {
+          throw new Error(`未找到景别类型 ${selectedTemplate.shotType} 对应的主体占比评价标准`);
+        }
+        throw new Error(`未找到景别类型 ${selectedTemplate.shotType} 与身体范围 ${selectedTemplate.bodyRange} 对应的主体占比评价标准`);
+      }
+
       const concreteScene = stripOptionCode(selectedTemplate.shotType);
       const concreteBodyRange = stripOptionCode(selectedTemplate.bodyRange);
-      const concreteRange = stripOptionCode(matchedShotRatio.range || selectedTemplate.bodyRange);
       const concreteOrientation = stripOptionCode(selectedTemplate.orientation);
       const concreteCompositionMethod = stripOptionCode(selectedTemplate.compositionMethod);
       const concreteCameraHeight = stripOptionCode(selectedTemplate.cameraHeight);
 
       setPersonCenterPosition(selectedTemplate.compositionObject);
       setPersonCenterPositionOffsetPercent(3);
+      setAlignmentCameraHeight(concreteCameraHeight);
 
       const requestBody: AlignmentPersonPayload = {
         type: 'alignment_person',
         templateKey: selectedAlignmentTemplate.key,
         scene: concreteScene,
         bodyRange: concreteBodyRange,
-        range: concreteRange,
-        ratioMin: matchedShotRatio.ratioMin,
-        ratioMax: matchedShotRatio.ratioMax,
+        ratioMin: matchedSubjectRatioScore.ratioMin,
+        ratioMax: matchedSubjectRatioScore.ratioMax,
         orientation: concreteOrientation,
         compositionMethod: concreteCompositionMethod,
         compositionObject: selectedTemplate.compositionObject,
@@ -1161,9 +1601,11 @@ function LivePusher() {
       if (!response.ok) {
         throw new Error(`提交失败（HTTP ${response.status}）`);
       }
+      restoreScrollTop(scrollTopBeforeSubmit);
     } catch (err) {
       console.error('提交对准-人失败', err);
       setAlignmentError((err as Error).message || '提交失败');
+      restoreScrollTop(scrollTopBeforeSubmit);
     }
   };
 
@@ -1386,15 +1828,7 @@ function LivePusher() {
                     }}
                 />
             )}
-            <div className="absolute left-3 bottom-3 pointer-events-none">
-              <div className="rounded bg-black/60 px-3 py-1 text-xs text-white">
-                当前算法：{currentAlgoLabel}
-              </div>
-            </div>
-
-            {((currentAlgoType === 'alignment_person' &&
-                (rawInfo?.bbox || rawInfo?.centerPoint || rawInfo?.ratio !== undefined || rawInfo?.yaw !== undefined)) ||
-                (currentAlgoType === 'upload_template' && imageSearchInfo)) && (
+            {shouldShowAnalysisPanel && (
                 <div className="absolute right-3 top-3 z-20 max-w-[min(78vw,320px)] text-xs text-white">
                   <div className="rounded-xl bg-black/60 backdrop-blur-md shadow-[0_8px_24px_rgba(15,23,42,0.28)]">
                     <button
@@ -1414,6 +1848,14 @@ function LivePusher() {
                           {currentAlgoType === 'alignment_person' && (
                               <>
                                 <div className="rounded bg-black/35 px-2 py-1">
+                                  当前算法：
+                                  <span className="ml-1 font-medium text-sky-200">{currentAlgoLabel}</span>
+                                </div>
+                                <div className="rounded bg-black/35 px-2 py-1">
+                                  当前算法阶段：
+                                  <span className="ml-1 font-medium text-sky-200">{currentStage || '--'}</span>
+                                </div>
+                                <div className="rounded bg-black/35 px-2 py-1">
                                   人体占比：
                                   {rawInfo?.ratio !== undefined
                                       ? `${(rawInfo.ratio * 100).toFixed(2)}%`
@@ -1425,11 +1867,19 @@ function LivePusher() {
                                         : '--'}
                                   </span>
                                 </div>
-                                <div className="rounded bg-black/35 px-2 py-1 space-y-1">
-                                  <div className="font-medium">画面说明</div>
-                                  <div>绿色点：人像-{personCenterPosition}的中心点</div>
-                                  <div>红色点 + 红色圆：画面中心与居中偏差范围（{personCenterPositionOffsetPercent}%）</div>
-                                </div>
+                                {shouldShowHeightRangeGuide ? (
+                                  <div className="rounded bg-black/35 px-2 py-1 space-y-1">
+                                    <div className="font-medium">画面说明</div>
+                                    <div>红色虚线：{effectiveAlignmentCameraHeight || '--'}的目标高度范围</div>
+                                  </div>
+                                ) : null}
+                                {shouldShowCenterPointMarkers ? (
+                                  <div className="rounded bg-black/35 px-2 py-1 space-y-1">
+                                    <div className="font-medium">画面说明</div>
+                                    <div>绿色点：人像-{personCenterPosition}的中心点</div>
+                                    <div>红色点 + 红色圆：画面中心与居中偏差范围（{personCenterPositionOffsetPercent}%）</div>
+                                  </div>
+                                ) : null}
                               </>
                           )}
                           {currentAlgoType === 'upload_template' && imageSearchInfo && (
@@ -1455,8 +1905,10 @@ function LivePusher() {
                 </div>
             )}
 
+            {shouldShowCenterAlignmentGuide && <CenterAlignmentGuideOverlay />}
+
             {(currentAlgoType === 'alignment_person') &&
-                (rawInfo?.bbox || rawInfo?.centerPoint || rawInfo?.ratio !== undefined || rawInfo?.yaw !== undefined) &&
+                hasAlignmentAnalysis &&
                 sourceSize &&
                 containerSize && (
                 <div className="absolute inset-0 pointer-events-none">
@@ -1483,7 +1935,31 @@ function LivePusher() {
                                 />
                             );
                           })()}
-                          {rawInfo.centerPoint && (() => {
+                          {shouldShowHeightRangeGuide && heightGuideTargetRatio !== null && (() => {
+                            const targetY = containerSize.height * heightGuideTargetRatio;
+                            const bandHalfHeight = Math.max(
+                                containerSize.height * HEIGHT_STAGE_RANGE_HALF_RATIO,
+                                10
+                            );
+                            const topLineY = Math.max(targetY - bandHalfHeight, 0);
+                            const bottomLineY = Math.min(
+                                targetY + bandHalfHeight,
+                                containerSize.height
+                            );
+                            return (
+                                <>
+                                  <div
+                                      className="absolute left-0 right-0 border-t-2 border-dashed border-red-500/80"
+                                      style={{ top: topLineY }}
+                                  />
+                                  <div
+                                      className="absolute left-0 right-0 border-t-2 border-dashed border-red-500/80"
+                                      style={{ top: bottomLineY }}
+                                  />
+                                </>
+                            );
+                          })()}
+                          {shouldShowCenterPointMarkers && rawInfo.centerPoint && (() => {
                             const [cx, cy] = rawInfo.centerPoint!;
                             const left = cx * scaleX;
                             const top = cy * scaleY;
@@ -1497,7 +1973,7 @@ function LivePusher() {
                                 />
                             );
                           })()}
-                          {(() => {
+                          {shouldShowCenterPointMarkers && (() => {
                             const centerX = containerSize.width / 2;
                             const centerY = containerSize.height / 2;
                             const diag = Math.hypot(
