@@ -276,9 +276,46 @@
 - `notify`
 - `alignment_done`
 
-### 6.3 回传消息示例
+### 6.3 中心点阶段额外 Overlay 字段
 
-#### 6.3.1 阶段内控制消息
+当 `currentStageCode = center` 时，运行时回传消息还会额外带上 `compositionOverlay`，用于前端直接绘制最后阶段的构图引导层。
+
+结构如下：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `compositionOverlay.targetCircle` | `object` | 目标落点区域，使用圆形表示“构图对象中心点需要到达的位置” |
+| `compositionOverlay.compositionObjectBox` | `object` | 构图对象框。`人体头部中心点` 时为头部框；`双眼中心点` 时为围绕双眼中心生成的引导框 |
+| `compositionOverlay.compositionObjectCenterPoint` | `object` | 构图对象中心点，即双眼中心点或人体头部中心点 |
+
+字段说明：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `compositionOverlay.targetCircle.shape` | `string` | 固定为 `circle` |
+| `compositionOverlay.targetCircle.anchor` | `string` | 当前构图锚点，例如 `中心点`、`H1V1`、`V1.5`、`H0V0-H3V3` |
+| `compositionOverlay.targetCircle.center` | `number[] \| null` | 目标圆心像素坐标 `[x, y]` |
+| `compositionOverlay.targetCircle.centerNorm` | `number[]` | 目标圆心归一化坐标 `[x, y]`，范围 `[0,1]` |
+| `compositionOverlay.targetCircle.radius` | `number \| null` | 目标圆半径，单位像素 |
+| `compositionOverlay.targetCircle.radiusNorm` | `number` | 目标圆半径的归一化值，默认取 `compositionOffsetPercent / 100` |
+| `compositionOverlay.compositionObjectBox.shape` | `string` | 固定为 `rect` |
+| `compositionOverlay.compositionObjectBox.object` | `string` | 构图对象，取值 `双眼中心点` 或 `人体头部中心点` |
+| `compositionOverlay.compositionObjectBox.bbox` | `number[] \| null` | 构图对象框像素坐标 `[x, y, w, h]` |
+| `compositionOverlay.compositionObjectBox.bboxNorm` | `number[]` | 构图对象框归一化坐标 `[x, y, w, h]`，仅在可计算时返回 |
+| `compositionOverlay.compositionObjectBox.isEstimated` | `boolean` | 是否为估算框。`双眼中心点` 当前为 `true`；`人体头部中心点` 当前为 `false` |
+| `compositionOverlay.compositionObjectCenterPoint.shape` | `string` | 固定为 `point` |
+| `compositionOverlay.compositionObjectCenterPoint.object` | `string` | 构图对象，取值 `双眼中心点` 或 `人体头部中心点` |
+| `compositionOverlay.compositionObjectCenterPoint.point` | `number[] \| null` | 构图对象中心点像素坐标 `[x, y]` |
+| `compositionOverlay.compositionObjectCenterPoint.pointNorm` | `number[]` | 构图对象中心点归一化坐标 `[x, y]`，范围 `[0,1]` |
+
+说明：
+
+- `双眼中心点` 当前没有底层算法直接输出的眼部框，因此 `compositionObjectBox` 是控制层根据双眼中心点和头部/人体框估算出的引导框。
+- 对于线性构图（如 `H1`、`V1.5`）或对角线构图，`targetCircle.center` 表示“当前构图对象中心点投影到目标线/对角线后的目标位置”。
+
+### 6.4 回传消息示例
+
+#### 6.4.1 阶段内控制消息
 
 ```json
 {
@@ -295,7 +332,50 @@
 }
 ```
 
-#### 6.3.2 阶段完成通知
+#### 6.4.2 中心点阶段控制消息
+
+```json
+{
+  "taskId": "123",
+  "command": "move",
+  "param": {
+    "pitch": 0,
+    "roll": -1
+  },
+  "algoType": "alignment_person",
+  "识别时间": "14:23:24",
+  "currentStageCode": "center",
+  "currentStage": "中心点对准",
+  "compositionOverlay": {
+    "compositionMethod": "三分线构图H1V1",
+    "compositionMethodCode": "D2.1",
+    "compositionObject": "双眼中心点",
+    "targetCircle": {
+      "shape": "circle",
+      "anchor": "H1V1",
+      "center": [160, 213.33],
+      "centerNorm": [0.333333, 0.333333],
+      "radius": 19.2,
+      "radiusNorm": 0.03
+    },
+    "compositionObjectBox": {
+      "shape": "rect",
+      "object": "双眼中心点",
+      "bbox": [172.4, 196.1, 58.2, 22.4],
+      "bboxNorm": [0.359167, 0.306406, 0.12125, 0.035],
+      "isEstimated": true
+    },
+    "compositionObjectCenterPoint": {
+      "shape": "point",
+      "object": "双眼中心点",
+      "point": [201.5, 207.3],
+      "pointNorm": [0.419792, 0.323906]
+    }
+  }
+}
+```
+
+#### 6.4.3 阶段完成通知
 
 ```json
 {
@@ -308,7 +388,7 @@
 }
 ```
 
-#### 6.3.3 最终完成消息
+#### 6.4.4 最终完成消息
 
 ```json
 {
@@ -318,7 +398,33 @@
   "algoType": "alignment_person",
   "识别时间": "14:23:26",
   "currentStageCode": "center",
-  "currentStage": "中心点对准"
+  "currentStage": "中心点对准",
+  "compositionOverlay": {
+    "compositionMethod": "居中构图",
+    "compositionMethodCode": "D1",
+    "compositionObject": "人体头部中心点",
+    "targetCircle": {
+      "shape": "circle",
+      "anchor": "中心点",
+      "center": [240, 320],
+      "centerNorm": [0.5, 0.5],
+      "radius": 19.2,
+      "radiusNorm": 0.03
+    },
+    "compositionObjectBox": {
+      "shape": "rect",
+      "object": "人体头部中心点",
+      "bbox": [168, 108, 146, 184],
+      "bboxNorm": [0.35, 0.16875, 0.304167, 0.2875],
+      "isEstimated": false
+    },
+    "compositionObjectCenterPoint": {
+      "shape": "point",
+      "object": "人体头部中心点",
+      "point": [241, 200],
+      "pointNorm": [0.502083, 0.3125]
+    }
+  }
 }
 ```
 

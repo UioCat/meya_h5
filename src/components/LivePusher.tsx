@@ -92,14 +92,45 @@ const CENTER_ALIGNMENT_GUIDE_POINTS = [
   { label: 'H2.25V2.75', x: 275, y: 225, dx: -2, dy: 6, anchor: 'end' as const }
 ];
 
-const CAMERA_HEIGHT_RANGE_GUIDE_TARGETS: Record<string, number> = {
-  齐眼: 50 / CENTER_ALIGNMENT_GUIDE_VIEWBOX,
-  齐肩: 100 / CENTER_ALIGNMENT_GUIDE_VIEWBOX,
-  齐髋: 200 / CENTER_ALIGNMENT_GUIDE_VIEWBOX,
-  齐膝: 225 / CENTER_ALIGNMENT_GUIDE_VIEWBOX
+const HEIGHT_STAGE_RANGE_HALF_RATIO = 0.035;
+
+const pickPosePoint = (
+    pose: any,
+    candidates: string[]
+): [number, number] | undefined => {
+  for (const key of candidates) {
+    const value = pose?.[key];
+    if (Array.isArray(value) && value.length === 2) {
+      const [x, y] = value;
+      if (typeof x === 'number' && typeof y === 'number') {
+        return [x, y];
+      }
+    }
+  }
+  return undefined;
 };
 
-const HEIGHT_STAGE_RANGE_HALF_RATIO = 0.035;
+const getHeightReferencePoint = (
+    pose: any,
+    cameraHeight: string
+): [number, number] | undefined => {
+  const normalized = cameraHeight.trim();
+  if (!normalized) return undefined;
+
+  if (normalized === '齐眼') {
+    return pickPosePoint(pose, ['eye_center', 'eyes_center', 'eye_point', 'eyePoint']);
+  }
+  if (normalized === '齐肩') {
+    return pickPosePoint(pose, ['shoulder_center', 'shoulders_center', 'shoulder_point', 'shoulderPoint']);
+  }
+  if (normalized === '齐髋') {
+    return pickPosePoint(pose, ['hip_center', 'hips_center', 'hip_point', 'hipPoint']);
+  }
+  if (normalized === '齐膝') {
+    return pickPosePoint(pose, ['knee_center', 'knees_center', 'knee_point', 'kneePoint']);
+  }
+  return undefined;
+};
 
 function CenterAlignmentGuideOverlay() {
   return (
@@ -252,6 +283,92 @@ function CenterAlignmentGuideOverlay() {
         ))}
       </svg>
     </div>
+  );
+}
+
+function VerticalDirectionIcon({
+  direction,
+  className = 'w-10 h-10'
+}: {
+  direction: 'up' | 'down';
+  className?: string;
+}) {
+  return direction === 'up' ? (
+      <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+        <path
+            d="M511.879529 0L60.235294 477.906824l290.514824-0.120471 0.783058 545.731765 321.355295 0.481882V477.786353L963.764706 478.027294 511.879529 0z"
+            fill="#46bc4e"
+        />
+      </svg>
+  ) : (
+      <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+        <path
+            d="M512.120471 1024L963.764706 546.093176l-290.514824 0.120471-0.783058-545.731765L351.111529 0v546.213647L60.235294 545.972706 512.120471 1024z"
+            fill="#46bc4e"
+        />
+      </svg>
+  );
+}
+
+function HorizontalDirectionIcon({
+  direction,
+  className = 'w-10 h-10'
+}: {
+  direction: 'left' | 'right';
+  className?: string;
+}) {
+  return direction === 'left' ? (
+      <svg className={className} viewBox="0 0 1137 1024" xmlns="http://www.w3.org/2000/svg">
+        <path
+            d="M1051.648 728.860444H552.732444v265.936593a61.591704 61.591704 0 0 1-87.115851 0.113778l-0.113778-0.113778-436.148148-439.333926a62.65363 62.65363 0 0 1 0-88.026074L465.464889 28.48237a60.946963 60.946963 0 0 1 86.167704-1.061926l1.061926 1.061926v265.519408h498.953481c40.997926 0 74.258963 33.261037 74.258963 74.258963v286.34074a74.221037 74.221037 0 0 1-74.258963 74.258963z"
+            fill="#46bc4e"
+        />
+      </svg>
+  ) : (
+      <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+        <path
+            d="M997.052632 512L458.105263 0v323.368421H26.947368v377.263158h431.157895v323.368421l538.947369-512z"
+            fill="#46bc4e"
+        />
+        <path
+            d="M929.738105 512l-431.157894-404.210526v260.473263l-430.618948 0.377263-0.538947 287.312842 431.157895-2.479158V916.210526l431.157894-404.210526z"
+            fill="#46bc4e"
+        />
+      </svg>
+  );
+}
+
+function RotateDirectionIcon({
+  direction,
+  className = 'w-8 h-8'
+}: {
+  direction: 'clockwise' | 'counterclockwise';
+  className?: string;
+}) {
+  return direction === 'clockwise' ? (
+      <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+        <path
+            d="M846.7456 272.3328L808.0384 128l-40.5504 70.2976A405.9648 405.9648 0 0 0 563.2 142.4384a409.6 409.6 0 0 0-173.1584 780.9024 25.6 25.6 0 1 0 21.76-46.1824 358.4 358.4 0 0 1 151.5008-683.3152 355.2768 355.2768 0 0 1 178.7392 48.8448l-39.5264 68.5056z"
+            fill="#46bc4e"
+            opacity=".2"
+        />
+        <path
+            d="M846.7456 246.784l-38.7072-144.3328-40.5504 70.2976A405.9648 405.9648 0 0 0 563.2 116.8896a409.6 409.6 0 0 0-173.1584 780.9024 25.6 25.6 0 1 0 21.76-46.1824 358.4 358.4 0 0 1 151.5008-683.3152 355.2768 355.2768 0 0 1 178.7392 48.8448l-39.5264 68.5056z"
+            fill="#46bc4e"
+        />
+      </svg>
+  ) : (
+      <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+        <path
+            d="M153.6 272.3328L192.256 128l40.6016 70.2976a405.76 405.76 0 0 1 204.2368-55.8592 409.6 409.6 0 0 1 173.2096 780.9024 25.6 25.6 0 1 1-21.6576-46.3872 358.4 358.4 0 0 0-151.552-683.3152 355.2768 355.2768 0 0 0-178.7392 48.8448l39.5776 68.5056z"
+            fill="#46bc4e"
+            opacity=".2"
+        />
+        <path
+            d="M153.6 246.784l38.656-144.3328 40.6016 70.2976a405.76 405.76 0 0 1 204.2368-55.8592 409.6 409.6 0 0 1 173.2096 780.9024 25.6 25.6 0 1 1-21.6576-46.3872 358.4 358.4 0 0 0-151.552-683.3152 355.2768 355.2768 0 0 0-178.7392 48.8448l39.5776 68.5056z"
+            fill="#46bc4e"
+        />
+      </svg>
   );
 }
 
@@ -475,7 +592,6 @@ function LivePusher() {
   const [personCenterPositionOffsetPercent, setPersonCenterPositionOffsetPercent] = useState(3);
   const [currentStage, setCurrentStage] = useState('');
   const [currentStageCode, setCurrentStageCode] = useState('');
-  const [alignmentCameraHeight, setAlignmentCameraHeight] = useState('');
   const [alignmentRunCompleted, setAlignmentRunCompleted] = useState(false);
   const [alignmentTemplates, setAlignmentTemplates] = useState<AlignmentTemplateItem[]>([]);
   const [selectedAlignmentTemplateKey, setSelectedAlignmentTemplateKey] = useState('');
@@ -494,6 +610,7 @@ function LivePusher() {
     ratio?: number;
     bbox?: [number, number, number, number];
     centerPoint?: [number, number];
+    heightReferencePoint?: [number, number];
     yaw?: number;
   } | null>(null);
   const [imageSearchInfo, setImageSearchInfo] = useState<{
@@ -517,6 +634,7 @@ function LivePusher() {
   const spectatorFlvPlayerRef = useRef<any>(null);
   const spectatorPcRef = useRef<RTCPeerConnection | null>(null);
   const currentAlgoTypeRef = useRef<AlgoType | null>(null);
+  const alignmentRunCompletedRef = useRef(false);
 
   const showNotify = (text: string) => {
     if (!text) return;
@@ -528,6 +646,9 @@ function LivePusher() {
       setNotifyMessage('');
     }, 2000);
   };
+  useEffect(() => {
+    alignmentRunCompletedRef.current = alignmentRunCompleted;
+  }, [alignmentRunCompleted]);
   const selectedAlignmentTemplate =
       alignmentTemplates.find(item => item.key === selectedAlignmentTemplateKey) || null;
   const currentAlgoLabel =
@@ -560,11 +681,8 @@ function LivePusher() {
       Boolean(rawInfo?.centerPoint) ||
       rawInfo?.ratio !== undefined ||
       rawInfo?.yaw !== undefined;
-  const effectiveAlignmentCameraHeight = alignmentCameraHeight ||
-      (selectedAlignmentTemplate ? stripOptionCode(selectedAlignmentTemplate.value.cameraHeight) : '');
-  const heightGuideTargetRatio = effectiveAlignmentCameraHeight
-      ? CAMERA_HEIGHT_RANGE_GUIDE_TARGETS[effectiveAlignmentCameraHeight] ?? null
-      : null;
+  const effectiveAlignmentCameraHeight =
+      selectedAlignmentTemplate ? stripOptionCode(selectedAlignmentTemplate.value.cameraHeight) : '';
   const isActiveAlignmentRun =
       activeMode === 'alignment_person' &&
       currentAlgoType === 'alignment_person' &&
@@ -572,6 +690,9 @@ function LivePusher() {
   const isHeightAlignmentStage =
       isActiveAlignmentRun &&
       (currentStage === '定高' || (currentStageCode ? /height/i.test(currentStageCode) : false));
+  const isDistanceAlignmentStage =
+      isActiveAlignmentRun &&
+      (currentStage === '定距' || (currentStageCode ? /distance/i.test(currentStageCode) : false));
   const isCenterAlignmentStage =
       isActiveAlignmentRun &&
       (currentStage === '中心点对准' || (currentStageCode ? /center/i.test(currentStageCode) : false));
@@ -582,8 +703,38 @@ function LivePusher() {
         currentAlgoType === 'upload_template' &&
         Boolean(imageSearchInfo));
   const shouldShowCenterAlignmentGuide = isCenterAlignmentStage;
-  const shouldShowHeightRangeGuide = isHeightAlignmentStage && heightGuideTargetRatio !== null;
+  const shouldShowHeightRangeGuide = isHeightAlignmentStage;
+  const shouldShowPersonBoundingBox = isDistanceAlignmentStage;
   const shouldShowCenterPointMarkers = isCenterAlignmentStage;
+  const movementSuggestions: Array<{ key: string; label: string; icon: JSX.Element }> = [];
+  if (moveGuide?.pitch !== undefined && moveGuide.pitch !== 0) {
+    movementSuggestions.push({
+      key: 'pitch',
+      label: moveGuide.pitch > 0 ? '向前' : '向后',
+      icon: <VerticalDirectionIcon direction={moveGuide.pitch > 0 ? 'up' : 'down'} />
+    });
+  }
+  if (moveGuide?.roll !== undefined && moveGuide.roll !== 0) {
+    movementSuggestions.push({
+      key: 'roll',
+      label: moveGuide.roll > 0 ? '向右' : '向左',
+      icon: <HorizontalDirectionIcon direction={moveGuide.roll > 0 ? 'right' : 'left'} />
+    });
+  }
+  if (moveGuide?.yaw !== undefined && moveGuide.yaw !== 0) {
+    movementSuggestions.push({
+      key: 'yaw',
+      label: moveGuide.yaw > 0 ? '顺时针转' : '逆时针转',
+      icon: <RotateDirectionIcon direction={moveGuide.yaw > 0 ? 'clockwise' : 'counterclockwise'} />
+    });
+  }
+  if (moveGuide?.throttle !== undefined && moveGuide.throttle !== 0) {
+    movementSuggestions.push({
+      key: 'throttle',
+      label: moveGuide.throttle > 0 ? '向上' : '向下',
+      icon: <VerticalDirectionIcon direction={moveGuide.throttle > 0 ? 'up' : 'down'} />
+    });
+  }
 
   const pusherRef = useRef<any>(null);
   const deviceManagerRef = useRef<any>(null);
@@ -680,7 +831,7 @@ function LivePusher() {
             setTaskOffNotice(false);
             setCurrentStage('');
             setCurrentStageCode('');
-            setAlignmentCameraHeight('');
+            alignmentRunCompletedRef.current = false;
             setAlignmentRunCompleted(false);
           }
           if (incomingAlgoType) {
@@ -690,9 +841,14 @@ function LivePusher() {
           const effectiveAlgoType = incomingAlgoType || currentAlgoTypeRef.current;
           const isAlignmentDoneMessage =
               effectiveAlgoType === 'alignment_person' && parsed?.type === 'alignment_done';
+          const shouldIgnoreCompletedAlignmentUpdate =
+              effectiveAlgoType === 'alignment_person' &&
+              alignmentRunCompletedRef.current &&
+              !isAlignmentDoneMessage;
 
-          if (effectiveAlgoType === 'alignment_person' && !isAlignmentDoneMessage) {
+          if (effectiveAlgoType === 'alignment_person' && !isAlignmentDoneMessage && !shouldIgnoreCompletedAlignmentUpdate) {
             setAlignmentRunCompleted(false);
+            alignmentRunCompletedRef.current = false;
             if (typeof parsed?.currentStage === 'string' && parsed.currentStage.trim()) {
               setCurrentStage(parsed.currentStage.trim());
             }
@@ -707,6 +863,7 @@ function LivePusher() {
             setMoveGuide(null);
             setCurrentStage('');
             setCurrentStageCode('');
+            alignmentRunCompletedRef.current = true;
             setAlignmentRunCompleted(true);
           }
 
@@ -719,7 +876,7 @@ function LivePusher() {
               setTaskOffNotice(false);
             }, 1000);
           }
-          if (!isAlignmentDoneMessage && parsed?.command === 'move' && parsed?.param) {
+          if (!isAlignmentDoneMessage && !shouldIgnoreCompletedAlignmentUpdate && parsed?.command === 'move' && parsed?.param) {
             setMoveGuide({
               pitch: parsed.param.pitch,
               roll: parsed.param.roll,
@@ -728,7 +885,7 @@ function LivePusher() {
             });
           }
 
-          if (!isAlignmentDoneMessage && parsed?.command === 'adjust' && parsed?.param) {
+          if (!isAlignmentDoneMessage && !shouldIgnoreCompletedAlignmentUpdate && parsed?.command === 'adjust' && parsed?.param) {
             setMoveGuide({
               pitch: undefined,
               roll: undefined,
@@ -737,7 +894,7 @@ function LivePusher() {
             });
           }
 
-          if (!isAlignmentDoneMessage && parsed && parsed.type === 'move') {
+          if (!isAlignmentDoneMessage && !shouldIgnoreCompletedAlignmentUpdate && parsed && parsed.type === 'move') {
             // 兼容旧协议（type=move, move/raw）
             if (parsed.move) {
               setMoveGuide(prev => ({
@@ -790,11 +947,12 @@ function LivePusher() {
               });
             }
 
-            if (effectiveAlgoType === 'alignment_person' && !isAlignmentDoneMessage) {
+            if (effectiveAlgoType === 'alignment_person' && !isAlignmentDoneMessage && !shouldIgnoreCompletedAlignmentUpdate) {
               const nextRaw: {
                 ratio?: number;
                 bbox?: [number, number, number, number];
                 centerPoint?: [number, number];
+                heightReferencePoint?: [number, number];
                 yaw?: number;
               } = {};
 
@@ -817,6 +975,15 @@ function LivePusher() {
                   parsed.raw.pose.center_point[0],
                   parsed.raw.pose.center_point[1]
                 ];
+              }
+              const heightReferencePoint = getHeightReferencePoint(
+                  parsed.raw?.pose,
+                  effectiveAlignmentCameraHeight
+              );
+              if (heightReferencePoint) {
+                nextRaw.heightReferencePoint = heightReferencePoint;
+              } else if (nextRaw.centerPoint) {
+                nextRaw.heightReferencePoint = nextRaw.centerPoint;
               }
               if (typeof parsed.raw?.head?.yaw === 'number') {
                 nextRaw.yaw = parsed.raw.head.yaw;
@@ -1081,7 +1248,7 @@ function LivePusher() {
     if (activeMode === 'alignment_person') return;
     setCurrentStage('');
     setCurrentStageCode('');
-    setAlignmentCameraHeight('');
+    alignmentRunCompletedRef.current = false;
     setAlignmentRunCompleted(false);
   }, [activeMode]);
 
@@ -1495,7 +1662,7 @@ function LivePusher() {
     setTaskOffNotice(false);
     setCurrentStage('');
     setCurrentStageCode('');
-    setAlignmentCameraHeight('');
+    alignmentRunCompletedRef.current = false;
     setAlignmentRunCompleted(false);
     restoreScrollTop(scrollTopBeforeSubmit);
     try {
@@ -1574,7 +1741,6 @@ function LivePusher() {
 
       setPersonCenterPosition(selectedTemplate.compositionObject);
       setPersonCenterPositionOffsetPercent(3);
-      setAlignmentCameraHeight(concreteCameraHeight);
 
       const requestBody: AlignmentPersonPayload = {
         type: 'alignment_person',
@@ -1867,10 +2033,17 @@ function LivePusher() {
                                         : '--'}
                                   </span>
                                 </div>
+                                {shouldShowPersonBoundingBox ? (
+                                  <div className="rounded bg-black/35 px-2 py-1 space-y-1">
+                                    <div className="font-medium">画面说明</div>
+                                    <div>绿色框：当前识别到的人体范围</div>
+                                  </div>
+                                ) : null}
                                 {shouldShowHeightRangeGuide ? (
                                   <div className="rounded bg-black/35 px-2 py-1 space-y-1">
                                     <div className="font-medium">画面说明</div>
-                                    <div>红色虚线：{effectiveAlignmentCameraHeight || '--'}的目标高度范围</div>
+                                    <div>红色虚线：以画面中心为基准的定高范围</div>
+                                    <div>绿色线：当前人物的{effectiveAlignmentCameraHeight || '--'}位置</div>
                                   </div>
                                 ) : null}
                                 {shouldShowCenterPointMarkers ? (
@@ -1917,7 +2090,7 @@ function LivePusher() {
                     const scaleY = containerSize.height / sourceSize.height;
                     return (
                         <>
-                          {rawInfo.bbox && (() => {
+                          {shouldShowPersonBoundingBox && rawInfo.bbox && (() => {
                             const [originX, originY, boxWidth, boxHeight] = rawInfo.bbox!;
                             const left = originX * scaleX;
                             const top = originY * scaleY;
@@ -1935,15 +2108,15 @@ function LivePusher() {
                                 />
                             );
                           })()}
-                          {shouldShowHeightRangeGuide && heightGuideTargetRatio !== null && (() => {
-                            const targetY = containerSize.height * heightGuideTargetRatio;
+                          {shouldShowHeightRangeGuide && (() => {
+                            const centerY = containerSize.height / 2;
                             const bandHalfHeight = Math.max(
                                 containerSize.height * HEIGHT_STAGE_RANGE_HALF_RATIO,
                                 10
                             );
-                            const topLineY = Math.max(targetY - bandHalfHeight, 0);
+                            const topLineY = Math.max(centerY - bandHalfHeight, 0);
                             const bottomLineY = Math.min(
-                                targetY + bandHalfHeight,
+                                centerY + bandHalfHeight,
                                 containerSize.height
                             );
                             return (
@@ -1956,6 +2129,12 @@ function LivePusher() {
                                       className="absolute left-0 right-0 border-t-2 border-dashed border-red-500/80"
                                       style={{ top: bottomLineY }}
                                   />
+                                  {rawInfo.heightReferencePoint ? (
+                                      <div
+                                          className="absolute left-0 right-0 border-t-2 border-emerald-400/90"
+                                          style={{ top: rawInfo.heightReferencePoint[1] * scaleY }}
+                                      />
+                                  ) : null}
                                 </>
                             );
                           })()}
@@ -2080,149 +2259,21 @@ function LivePusher() {
                 </div>
             )}
 
- d           {moveGuide && (
+            {movementSuggestions.length > 0 && (
                 <div className="absolute inset-0 pointer-events-none text-white">
-                  {moveGuide.pitch !== undefined && moveGuide.pitch !== 0 && (
-                      <div className="absolute bottom-[30%] left-1/2 -translate-x-1/2 flex flex-col items-center">
-                        <div className="text-sm bg-black/60 px-3 py-1 rounded">
-                          {moveGuide.pitch > 0 ? '向前' : '向后'}
-                        </div>
-                        {moveGuide.pitch > 0 ? (
-                            <svg
-                                className="w-14 h-14 mt-2"
-                                viewBox="0 0 1024 1024"
-                                xmlns="http://www.w3.org/2000/svg"
-                            >
-                              <path
-                                  d="M511.879529 0L60.235294 477.906824l290.514824-0.120471 0.783058 545.731765 321.355295 0.481882V477.786353L963.764706 478.027294 511.879529 0z"
-                                  fill="#46bc4e"
-                              />
-                            </svg>
-                        ) : (
-                            <svg
-                                className="w-14 h-14 mt-2"
-                                viewBox="0 0 1024 1024"
-                                xmlns="http://www.w3.org/2000/svg"
-                            >
-                              <path
-                                  d="M512.120471 1024L963.764706 546.093176l-290.514824 0.120471-0.783058-545.731765L351.111529 0v546.213647L60.235294 545.972706 512.120471 1024z"
-                                  fill="#46bc4e"
-                              />
-                            </svg>
-                        )}
-                      </div>
-                  )}
-
-                  {moveGuide.roll !== undefined && moveGuide.roll !== 0 && (
-                      <>
-                        {moveGuide.roll < 0 && (
-                            <div className="absolute bottom-[24%] left-6 flex items-center gap-2 text-emerald-400">
-                              <svg
-                                  className="w-12 h-12"
-                                  viewBox="0 0 1137 1024"
-                                  xmlns="http://www.w3.org/2000/svg"
-                              >
-                                <path
-                                    d="M1051.648 728.860444H552.732444v265.936593a61.591704 61.591704 0 0 1-87.115851 0.113778l-0.113778-0.113778-436.148148-439.333926a62.65363 62.65363 0 0 1 0-88.026074L465.464889 28.48237a60.946963 60.946963 0 0 1 86.167704-1.061926l1.061926 1.061926v265.519408h498.953481c40.997926 0 74.258963 33.261037 74.258963 74.258963v286.34074a74.221037 74.221037 0 0 1-74.258963 74.258963z"
-                                    fill="#46bc4e"
-                                />
-                              </svg>
-                              <div className="text-base bg-black/60 px-2 py-1 rounded text-white">向左</div>
-                            </div>
-                        )}
-                        {moveGuide.roll > 0 && (
-                            <div className="absolute bottom-[24%] right-6 flex items-center gap-2 text-emerald-400">
-                              <div className="text-base bg-black/60 px-2 py-1 rounded text-white">向右</div>
-                              <svg
-                                  className="w-12 h-12"
-                                  viewBox="0 0 1024 1024"
-                                  xmlns="http://www.w3.org/2000/svg"
-                              >
-                                <path
-                                    d="M997.052632 512L458.105263 0v323.368421H26.947368v377.263158h431.157895v323.368421l538.947369-512z"
-                                    fill="#46bc4e"
-                                />
-                                <path
-                                    d="M929.738105 512l-431.157894-404.210526v260.473263l-430.618948 0.377263-0.538947 287.312842 431.157895-2.479158V916.210526l431.157894-404.210526z"
-                                    fill="#46bc4e"
-                                />
-                              </svg>
-                            </div>
-                        )}
-                      </>
-                  )}
-
-                  {moveGuide.yaw !== undefined && moveGuide.yaw !== 0 && (
-                      <div className="absolute bottom-[16%] left-1/2 -translate-x-1/2 flex items-center gap-2">
-                        <div className="text-sm bg-black/60 px-3 py-1 rounded flex items-center gap-2">
-                          {moveGuide.yaw > 0 ? (
-                              <svg
-                                  className="w-7 h-7"
-                                  viewBox="0 0 1024 1024"
-                                  xmlns="http://www.w3.org/2000/svg"
-                              >
-                                <path
-                                    d="M846.7456 272.3328L808.0384 128l-40.5504 70.2976A405.9648 405.9648 0 0 0 563.2 142.4384a409.6 409.6 0 0 0-173.1584 780.9024 25.6 25.6 0 1 0 21.76-46.1824 358.4 358.4 0 0 1 151.5008-683.3152 355.2768 355.2768 0 0 1 178.7392 48.8448l-39.5264 68.5056z"
-                                    fill="#46bc4e"
-                                    opacity=".2"
-                                />
-                                <path
-                                    d="M846.7456 246.784l-38.7072-144.3328-40.5504 70.2976A405.9648 405.9648 0 0 0 563.2 116.8896a409.6 409.6 0 0 0-173.1584 780.9024 25.6 25.6 0 1 0 21.76-46.1824 358.4 358.4 0 0 1 151.5008-683.3152 355.2768 355.2768 0 0 1 178.7392 48.8448l-39.5264 68.5056z"
-                                    fill="#46bc4e"
-                                />
-                              </svg>
-                          ) : (
-                              <svg
-                                  className="w-7 h-7"
-                                  viewBox="0 0 1024 1024"
-                                  xmlns="http://www.w3.org/2000/svg"
-                              >
-                                <path
-                                    d="M153.6 272.3328L192.256 128l40.6016 70.2976a405.76 405.76 0 0 1 204.2368-55.8592 409.6 409.6 0 0 1 173.2096 780.9024 25.6 25.6 0 1 1-21.6576-46.3872 358.4 358.4 0 0 0-151.552-683.3152 355.2768 355.2768 0 0 0-178.7392 48.8448l39.5776 68.5056z"
-                                    fill="#46bc4e"
-                                    opacity=".2"
-                                />
-                                <path
-                                    d="M153.6 246.784l38.656-144.3328 40.6016 70.2976a405.76 405.76 0 0 1 204.2368-55.8592 409.6 409.6 0 0 1 173.2096 780.9024 25.6 25.6 0 1 1-21.6576-46.3872 358.4 358.4 0 0 0-151.552-683.3152 355.2768 355.2768 0 0 0-178.7392 48.8448l39.5776 68.5056z"
-                                    fill="#46bc4e"
-                                />
-                              </svg>
-                          )}
-                          {moveGuide.yaw > 0 ? '顺时针转' : '逆时针转'}
-                        </div>
-                      </div>
-                  )}
-
-                  {moveGuide.throttle !== undefined && moveGuide.throttle !== 0 && (
-                      <div className="absolute bottom-[24%] right-4 flex flex-col items-center">
-                        <div className="text-sm bg-black/60 px-3 py-1 rounded mb-2">
-                          {moveGuide.throttle > 0 ? '向上' : '向下'}
-                        </div>
-                        {moveGuide.throttle > 0 ? (
-                            <svg
-                                className="w-12 h-12"
-                                viewBox="0 0 1024 1024"
-                                xmlns="http://www.w3.org/2000/svg"
-                            >
-                              <path
-                                  d="M511.879529 0L60.235294 477.906824l290.514824-0.120471 0.783058 545.731765 321.355295 0.481882V477.786353L963.764706 478.027294 511.879529 0z"
-                                  fill="#46bc4e"
-                              />
-                            </svg>
-                        ) : (
-                            <svg
-                                className="w-12 h-12"
-                                viewBox="0 0 1024 1024"
-                                xmlns="http://www.w3.org/2000/svg"
-                            >
-                              <path
-                                  d="M512.120471 1024L963.764706 546.093176l-290.514824 0.120471-0.783058-545.731765L351.111529 0v546.213647L60.235294 545.972706 512.120471 1024z"
-                                  fill="#46bc4e"
-                              />
-                            </svg>
-                        )}
-                      </div>
-                  )}
+                  <div className="absolute inset-x-0 bottom-[12%] flex justify-center px-4 sm:bottom-[10%]">
+                    <div className="flex max-w-full flex-wrap items-center justify-center gap-3">
+                      {movementSuggestions.map(item => (
+                          <div
+                              key={item.key}
+                              className="flex min-w-[120px] items-center justify-center gap-2 rounded-xl bg-black/60 px-3 py-2 text-sm text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)] backdrop-blur-md sm:min-w-[132px]"
+                          >
+                            {item.icon}
+                            <span className="whitespace-nowrap">{item.label}</span>
+                          </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
             )}
 
