@@ -94,6 +94,27 @@ const CENTER_ALIGNMENT_GUIDE_POINTS = [
 
 const HEIGHT_STAGE_RANGE_HALF_RATIO = 0.035;
 
+const parseOverlayPoint = (value: unknown): [number, number] | null => {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const [x, y] = value;
+  if (typeof x !== 'number' || typeof y !== 'number') return null;
+  return [x, y];
+};
+
+const parseOverlayBox = (value: unknown): [number, number, number, number] | null => {
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  const [x, y, width, height] = value;
+  if (
+      typeof x !== 'number' ||
+      typeof y !== 'number' ||
+      typeof width !== 'number' ||
+      typeof height !== 'number'
+  ) {
+    return null;
+  }
+  return [x, y, width, height];
+};
+
 const pickPosePoint = (
     pose: any,
     candidates: string[]
@@ -419,6 +440,7 @@ const parseSubjectRatioScoreBounds = (value: string): { ratioMin: string; ratioM
 type AlignmentPersonPayload = {
   type: 'alignment_person';
   templateKey: string;
+  streamUrl: string;
   scene: string;
   bodyRange: string;
   ratioMin: string;
@@ -430,6 +452,20 @@ type AlignmentPersonPayload = {
   eyeStatus: string;
   mouthStatus: string;
 };
+
+type StreamSourceOption = 'mobile' | 'drone';
+
+const STREAM_SOURCE_OPTIONS: Array<{ value: StreamSourceOption; label: string }> = [
+  { value: 'mobile', label: '手机' },
+  { value: 'drone', label: '无人机' }
+];
+
+const DRONE_SPECTATOR_URL = 'http://localhost:1985/rtc/v1/whep/?app=live&stream=stream.flv';
+
+const getStreamUrlBySource = (source: StreamSourceOption) =>
+    source === 'drone'
+        ? 'http://localhost:8080/live/stream.flv'
+        : 'http://play.uiofield.top/live/stream.flv';
 
 const parseAlignmentTemplateValue = (value: unknown): AlignmentTemplateValue | null => {
   let source = value;
@@ -579,15 +615,14 @@ function LivePusher() {
   const [isConsoleExpanded, setIsConsoleExpanded] = useState(true);
   const [isAnalysisPanelExpanded, setIsAnalysisPanelExpanded] = useState(true);
   const [notifyMessage, setNotifyMessage] = useState('');
-  const [activeMode, setActiveMode] = useState<'image_search' | 'alignment_person' | 'spectator'>(
-      'image_search'
-  );
+  const [activeMode, setActiveMode] = useState<'image_search' | 'alignment_person' | null>(null);
   const [spectatorFlvUrl, setSpectatorFlvUrl] = useState('http://localhost:1985/rtc/v1/whep/?app=live&stream=stream.flv');
   const [spectatorIsLive, setSpectatorIsLive] = useState(true);
   const [spectatorWithCredentials, setSpectatorWithCredentials] = useState(false);
   const [spectatorHasAudio, setSpectatorHasAudio] = useState(true);
   const [spectatorHasVideo, setSpectatorHasVideo] = useState(true);
   const [spectatorLogs, setSpectatorLogs] = useState<string[]>([]);
+  const [controlDevice, setControlDevice] = useState<StreamSourceOption>('mobile');
   const [personCenterPosition, setPersonCenterPosition] = useState('双眼中心点');
   const [personCenterPositionOffsetPercent, setPersonCenterPositionOffsetPercent] = useState(3);
   const [currentStage, setCurrentStage] = useState('');
@@ -603,6 +638,10 @@ function LivePusher() {
     yaw?: number;
     throttle?: number;
   } | null>(null);
+  const [gimbalGuide, setGimbalGuide] = useState<{
+    horizontal?: number;
+    vertical?: number;
+  } | null>(null);
   const [renderAspect, setRenderAspect] = useState<string | null>(null);
   const [sourceSize, setSourceSize] = useState<{ width: number; height: number } | null>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
@@ -611,6 +650,10 @@ function LivePusher() {
     bbox?: [number, number, number, number];
     centerPoint?: [number, number];
     heightReferencePoint?: [number, number];
+    targetBox?: [number, number, number, number];
+    compositionObjectBox?: [number, number, number, number];
+    compositionObjectCenterPoint?: [number, number];
+    compositionObjectName?: string;
     yaw?: number;
   } | null>(null);
   const [imageSearchInfo, setImageSearchInfo] = useState<{
@@ -679,6 +722,9 @@ function LivePusher() {
   const hasAlignmentAnalysis =
       Boolean(rawInfo?.bbox) ||
       Boolean(rawInfo?.centerPoint) ||
+      Boolean(rawInfo?.targetBox) ||
+      Boolean(rawInfo?.compositionObjectBox) ||
+      Boolean(rawInfo?.compositionObjectCenterPoint) ||
       rawInfo?.ratio !== undefined ||
       rawInfo?.yaw !== undefined;
   const effectiveAlignmentCameraHeight =
@@ -706,6 +752,12 @@ function LivePusher() {
   const shouldShowHeightRangeGuide = isHeightAlignmentStage;
   const shouldShowPersonBoundingBox = isDistanceAlignmentStage;
   const shouldShowCenterPointMarkers = isCenterAlignmentStage;
+  const shouldShowCompositionOverlay =
+      shouldShowCenterPointMarkers &&
+      (Boolean(rawInfo?.targetBox) ||
+        Boolean(rawInfo?.compositionObjectBox) ||
+        Boolean(rawInfo?.compositionObjectCenterPoint));
+  const isDroneControl = controlDevice === 'drone';
   const movementSuggestions: Array<{ key: string; label: string; icon: JSX.Element }> = [];
   if (moveGuide?.pitch !== undefined && moveGuide.pitch !== 0) {
     movementSuggestions.push({
@@ -735,6 +787,22 @@ function LivePusher() {
       icon: <VerticalDirectionIcon direction={moveGuide.throttle > 0 ? 'up' : 'down'} />
     });
   }
+  const gimbalSuggestions: Array<{ key: string; label: string; icon: JSX.Element }> = [];
+  if (gimbalGuide?.vertical !== undefined && gimbalGuide.vertical !== 0) {
+    gimbalSuggestions.push({
+      key: 'gimbal-vertical',
+      label: gimbalGuide.vertical > 0 ? '云台调整-上' : '云台调整-下',
+      icon: <VerticalDirectionIcon direction={gimbalGuide.vertical > 0 ? 'up' : 'down'} />
+    });
+  }
+  if (gimbalGuide?.horizontal !== undefined && gimbalGuide.horizontal !== 0) {
+    gimbalSuggestions.push({
+      key: 'gimbal-horizontal',
+      label: gimbalGuide.horizontal > 0 ? '云台调整-右' : '云台调整-左',
+      icon: <HorizontalDirectionIcon direction={gimbalGuide.horizontal > 0 ? 'right' : 'left'} />
+    });
+  }
+  const controlSuggestions = [...movementSuggestions, ...gimbalSuggestions];
 
   const pusherRef = useRef<any>(null);
   const deviceManagerRef = useRef<any>(null);
@@ -828,6 +896,7 @@ function LivePusher() {
             setRawInfo(null);
             setImageSearchInfo(null);
             setMoveGuide(null);
+            setGimbalGuide(null);
             setTaskOffNotice(false);
             setCurrentStage('');
             setCurrentStageCode('');
@@ -861,6 +930,7 @@ function LivePusher() {
             setRawInfo(null);
             setImageSearchInfo(null);
             setMoveGuide(null);
+            setGimbalGuide(null);
             setCurrentStage('');
             setCurrentStageCode('');
             alignmentRunCompletedRef.current = true;
@@ -891,6 +961,25 @@ function LivePusher() {
               roll: undefined,
               yaw: parsed.param.yaw,
               throttle: parsed.param.throttle
+            });
+          }
+
+          if (!isAlignmentDoneMessage && !shouldIgnoreCompletedAlignmentUpdate && parsed?.command === 'gimbal_adjust' && parsed?.param) {
+            const horizontal =
+                typeof parsed.param.yaw === 'number'
+                    ? parsed.param.yaw
+                    : typeof parsed.param.roll === 'number'
+                        ? parsed.param.roll
+                        : undefined;
+            const vertical =
+                typeof parsed.param.throttle === 'number'
+                    ? parsed.param.throttle
+                    : typeof parsed.param.pitch === 'number'
+                        ? parsed.param.pitch
+                        : undefined;
+            setGimbalGuide({
+              horizontal,
+              vertical
             });
           }
 
@@ -953,6 +1042,10 @@ function LivePusher() {
                 bbox?: [number, number, number, number];
                 centerPoint?: [number, number];
                 heightReferencePoint?: [number, number];
+                targetBox?: [number, number, number, number];
+                compositionObjectBox?: [number, number, number, number];
+                compositionObjectCenterPoint?: [number, number];
+                compositionObjectName?: string;
                 yaw?: number;
               } = {};
 
@@ -987,6 +1080,36 @@ function LivePusher() {
               }
               if (typeof parsed.raw?.head?.yaw === 'number') {
                 nextRaw.yaw = parsed.raw.head.yaw;
+              }
+              if (parsed?.compositionOverlay && typeof parsed.compositionOverlay === 'object') {
+                const targetCenter = parseOverlayPoint(parsed.compositionOverlay?.targetCircle?.center);
+                const targetRadius =
+                    typeof parsed.compositionOverlay?.targetCircle?.radius === 'number'
+                        ? parsed.compositionOverlay.targetCircle.radius
+                        : null;
+                if (targetCenter && typeof targetRadius === 'number') {
+                  nextRaw.targetBox = [
+                    targetCenter[0] - targetRadius,
+                    targetCenter[1] - targetRadius,
+                    targetRadius * 2,
+                    targetRadius * 2
+                  ];
+                }
+                const compositionObjectBox = parseOverlayBox(parsed.compositionOverlay?.compositionObjectBox?.bbox);
+                if (compositionObjectBox) {
+                  nextRaw.compositionObjectBox = compositionObjectBox;
+                }
+                const compositionObjectCenterPoint = parseOverlayPoint(
+                    parsed.compositionOverlay?.compositionObjectCenterPoint?.point
+                );
+                if (compositionObjectCenterPoint) {
+                  nextRaw.compositionObjectCenterPoint = compositionObjectCenterPoint;
+                }
+                if (typeof parsed.compositionOverlay?.compositionObject === 'string') {
+                  nextRaw.compositionObjectName = parsed.compositionOverlay.compositionObject;
+                } else if (typeof parsed.compositionOverlay?.compositionObjectBox?.object === 'string') {
+                  nextRaw.compositionObjectName = parsed.compositionOverlay.compositionObjectBox.object;
+                }
               }
 
               if (Object.keys(nextRaw).length > 0) {
@@ -1250,6 +1373,7 @@ function LivePusher() {
     setCurrentStageCode('');
     alignmentRunCompletedRef.current = false;
     setAlignmentRunCompleted(false);
+    setGimbalGuide(null);
   }, [activeMode]);
 
   useEffect(() => {
@@ -1378,9 +1502,9 @@ function LivePusher() {
   const flvLoad = async () => {
     const video = spectatorVideoRef.current;
     if (!video) return false;
-    if (activeMode !== 'spectator') return false;
+    if (!isDroneControl) return false;
 
-    const targetUrl = spectatorFlvUrl || 'http://localhost:8080/live/stream.flv';
+    const targetUrl = DRONE_SPECTATOR_URL;
     const isWhep = /\/rtc\/v1\/whep\//.test(targetUrl);
     if (isWhep) {
       try {
@@ -1459,14 +1583,14 @@ function LivePusher() {
   useEffect(() => {
     const video = spectatorVideoRef.current;
     if (!video) return;
-    if (activeMode !== 'spectator' || !isStreaming) {
+    if (!isDroneControl || !isStreaming) {
       destroySpectatorFlvPlayer();
       destroySpectatorWhepPlayer();
       video.pause();
       return;
     }
     flvLoad();
-  }, [activeMode, isStreaming]);
+  }, [isDroneControl, isStreaming]);
 
   const resetRenderView = () => {
     const container = document.getElementById('videoContainer');
@@ -1659,6 +1783,7 @@ function LivePusher() {
     // 重新提交任务时清空画面提示
     setRawInfo(null);
     setMoveGuide(null);
+    setGimbalGuide(null);
     setTaskOffNotice(false);
     setCurrentStage('');
     setCurrentStageCode('');
@@ -1745,6 +1870,7 @@ function LivePusher() {
       const requestBody: AlignmentPersonPayload = {
         type: 'alignment_person',
         templateKey: selectedAlignmentTemplate.key,
+        streamUrl: getStreamUrlBySource(controlDevice),
         scene: concreteScene,
         bodyRange: concreteBodyRange,
         ratioMin: matchedSubjectRatioScore.ratioMin,
@@ -1796,7 +1922,7 @@ function LivePusher() {
           type: 'upload_template',
           filename: file.name.replace(/\.\w+$/, '.jpg'),
           contentType: 'image/jpeg',
-          streamUrl: 'http://play.uiofield.top/live/stream.flv',
+          streamUrl: getStreamUrlBySource(controlDevice),
           data: compressedBase64
         })
       });
@@ -1838,10 +1964,16 @@ function LivePusher() {
   const startStream = async () => {
     try {
       setError('');
-      if (activeMode === 'spectator') {
+      if (isDroneControl) {
         setStreamStatus('启动旁观模式...');
+        resetRenderView();
+        setRenderAspect(null);
         setIsStreaming(true);
-        setStreamStatus('旁观中');
+        window.requestAnimationFrame(() => {
+          void flvLoad().then(success => {
+            setStreamStatus(success ? '旁观中' : '旁观启动失败');
+          });
+        });
         return;
       }
 
@@ -1926,6 +2058,7 @@ function LivePusher() {
     setIsStreaming(false);
     setStreamStatus('未连接');
     setRenderAspect(null);
+    setActiveMode(null);
 
     // ⭐ 防止残留 DOM
     resetRenderView();
@@ -1977,7 +2110,7 @@ function LivePusher() {
                 object-fit: cover;
               }
             `}</style>
-            {activeMode === 'spectator' && (
+            {isDroneControl && (
                 <video
                     ref={spectatorVideoRef}
                     className="absolute inset-0 w-full h-full object-cover"
@@ -2049,8 +2182,18 @@ function LivePusher() {
                                 {shouldShowCenterPointMarkers ? (
                                   <div className="rounded bg-black/35 px-2 py-1 space-y-1">
                                     <div className="font-medium">画面说明</div>
-                                    <div>绿色点：人像-{personCenterPosition}的中心点</div>
-                                    <div>红色点 + 红色圆：画面中心与居中偏差范围（{personCenterPositionOffsetPercent}%）</div>
+                                    {shouldShowCompositionOverlay ? (
+                                      <>
+                                        <div>红色框：构图对象中心点需要到达的位置</div>
+                                        <div>绿色框：构图对象（{rawInfo?.compositionObjectName || personCenterPosition}）</div>
+                                        <div>绿色点：构图对象中心点</div>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <div>绿色点：人像-{personCenterPosition}的中心点</div>
+                                        <div>红色点 + 红色圆：画面中心与居中偏差范围（{personCenterPositionOffsetPercent}%）</div>
+                                      </>
+                                    )}
                                   </div>
                                 ) : null}
                               </>
@@ -2138,7 +2281,57 @@ function LivePusher() {
                                 </>
                             );
                           })()}
-                          {shouldShowCenterPointMarkers && rawInfo.centerPoint && (() => {
+                          {shouldShowCompositionOverlay && rawInfo.targetBox && (() => {
+                            const [originX, originY, boxWidth, boxHeight] = rawInfo.targetBox!;
+                            const left = originX * scaleX;
+                            const top = originY * scaleY;
+                            const width = boxWidth * scaleX;
+                            const height = boxHeight * scaleY;
+                            return (
+                                <div
+                                    className="absolute border-2 border-red-500/80"
+                                    style={{
+                                      left,
+                                      top,
+                                      width,
+                                      height
+                                    }}
+                                />
+                            );
+                          })()}
+                          {shouldShowCompositionOverlay && rawInfo.compositionObjectBox && (() => {
+                            const [originX, originY, boxWidth, boxHeight] = rawInfo.compositionObjectBox!;
+                            const left = originX * scaleX;
+                            const top = originY * scaleY;
+                            const width = boxWidth * scaleX;
+                            const height = boxHeight * scaleY;
+                            return (
+                                <div
+                                    className="absolute border-2 border-emerald-400"
+                                    style={{
+                                      left,
+                                      top,
+                                      width,
+                                      height
+                                    }}
+                                />
+                            );
+                          })()}
+                          {shouldShowCompositionOverlay && rawInfo.compositionObjectCenterPoint && (() => {
+                            const [cx, cy] = rawInfo.compositionObjectCenterPoint!;
+                            const left = cx * scaleX;
+                            const top = cy * scaleY;
+                            return (
+                                <div
+                                    className="absolute w-3 h-3 bg-emerald-400 rounded-full -translate-x-1/2 -translate-y-1/2"
+                                    style={{
+                                      left,
+                                      top
+                                    }}
+                                />
+                            );
+                          })()}
+                          {shouldShowCenterPointMarkers && !shouldShowCompositionOverlay && rawInfo.centerPoint && (() => {
                             const [cx, cy] = rawInfo.centerPoint!;
                             const left = cx * scaleX;
                             const top = cy * scaleY;
@@ -2152,7 +2345,7 @@ function LivePusher() {
                                 />
                             );
                           })()}
-                          {shouldShowCenterPointMarkers && (() => {
+                          {shouldShowCenterPointMarkers && !shouldShowCompositionOverlay && (() => {
                             const centerX = containerSize.width / 2;
                             const centerY = containerSize.height / 2;
                             const diag = Math.hypot(
@@ -2259,11 +2452,11 @@ function LivePusher() {
                 </div>
             )}
 
-            {movementSuggestions.length > 0 && (
+            {controlSuggestions.length > 0 && (
                 <div className="absolute inset-0 pointer-events-none text-white">
                   <div className="absolute inset-x-0 bottom-[12%] flex justify-center px-4 sm:bottom-[10%]">
                     <div className="flex max-w-full flex-wrap items-center justify-center gap-3">
-                      {movementSuggestions.map(item => (
+                      {controlSuggestions.map(item => (
                           <div
                               key={item.key}
                               className="flex min-w-[120px] items-center justify-center gap-2 rounded-xl bg-black/60 px-3 py-2 text-sm text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)] backdrop-blur-md sm:min-w-[132px]"
@@ -2277,7 +2470,7 @@ function LivePusher() {
                 </div>
             )}
 
-            {(activeMode === 'alignment_person' || activeMode === 'spectator') && taskOffNotice && (
+            {activeMode === 'alignment_person' && taskOffNotice && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="text-3xl md:text-4xl font-bold text-emerald-400 bg-black/60 px-6 py-3 rounded-xl">
                     算法启动成功，开始识别中
@@ -2305,20 +2498,33 @@ function LivePusher() {
             WS：{wsStatus}
             </span>
             {isStreaming && (
-                <span className={`flex items-center ${activeMode === 'spectator' ? 'text-emerald-400' : 'text-red-500'}`}>
-                    <Radio className="w-4 h-4 mr-1" /> {activeMode === 'spectator' ? '旁观中' : '直播中'}
+                <span className={`flex items-center ${isDroneControl ? 'text-emerald-400' : 'text-red-500'}`}>
+                    <Radio className="w-4 h-4 mr-1" /> {isDroneControl ? '旁观中' : '直播中'}
                   </span>
             )}
           </div>
           <div className="bg-slate-800 rounded-xl p-4 text-white">
             <div className="flex items-center justify-between">
               <div className="text-slate-300">指令控制台</div>
-              <button
-                  onClick={() => setIsConsoleExpanded(prev => !prev)}
-                  className="text-xs px-2 py-1 rounded bg-slate-700 text-slate-200"
-              >
-                {isConsoleExpanded ? '收起' : '展开'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                    onClick={() => setMessages([])}
+                    disabled={messages.length === 0}
+                    className={`text-xs px-2 py-1 rounded ${
+                        messages.length === 0
+                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                            : 'bg-slate-700 text-slate-200'
+                    }`}
+                >
+                  清空
+                </button>
+                <button
+                    onClick={() => setIsConsoleExpanded(prev => !prev)}
+                    className="text-xs px-2 py-1 rounded bg-slate-700 text-slate-200"
+                >
+                  {isConsoleExpanded ? '收起' : '展开'}
+                </button>
+              </div>
             </div>
 
             {isConsoleExpanded && (
@@ -2339,8 +2545,28 @@ function LivePusher() {
             )}
           </div>
 
-          <div className="flex space-x-3 items-center">
-            {activeMode !== 'spectator' && (
+          <div className="bg-slate-800 rounded-xl p-4 text-white space-y-4">
+            <div>
+              <label className="text-slate-300 text-sm">控制设备</label>
+              <select
+                  disabled={isStreaming}
+                  value={controlDevice}
+                  onChange={e => {
+                    setControlDevice(e.target.value as StreamSourceOption);
+                    setActiveMode(null);
+                  }}
+                  className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
+              >
+                {STREAM_SOURCE_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex space-x-3 items-center">
+            {!isDroneControl && (
                 <select
                     disabled={isStreaming}
                     value={selectedCamera}
@@ -2362,45 +2588,45 @@ function LivePusher() {
                 }`}
             >
               {isStreaming
-                  ? (activeMode === 'spectator' ? '停止旁观' : '停止推流')
-                  : (activeMode === 'spectator' ? '开始旁观' : '开始推流')}
+                  ? (isDroneControl ? '停止旁观' : '停止推流')
+                  : (isDroneControl ? '开始旁观' : '开始推流')}
             </button>
-
+            </div>
           </div>
 
           <div className="bg-slate-800 rounded-xl p-4 text-white">
             <div className="text-slate-300 mb-3">模式</div>
-            <div className="flex space-x-3">
-              <button
-                  onClick={() => setActiveMode('image_search')}
-                  className={`px-4 py-2 rounded-xl ${
-                      activeMode === 'image_search' ? 'bg-blue-500' : 'bg-slate-700'
-                  }`}
-              >
-                以图搜景
-              </button>
-              <button
-                  onClick={() => setActiveMode('alignment_person')}
-                  className={`px-4 py-2 rounded-xl ${
-                      activeMode === 'alignment_person'
-                          ? 'bg-blue-500'
-                          : 'bg-slate-700'
-                  }`}
-              >
-                对准-人
-              </button>
-              <button
-                  onClick={() => setActiveMode('spectator')}
-                  className={`px-4 py-2 rounded-xl ${
-                      activeMode === 'spectator' ? 'bg-blue-500' : 'bg-slate-700'
-                  }`}
-              >
-                旁观者
-              </button>
-            </div>
+            {!isStreaming ? (
+                <div className="text-sm text-slate-400">
+                  请先选择控制设备，然后点击{isDroneControl ? '“开始旁观”' : '“开始推流”'}，再选择算法模式。
+                </div>
+            ) : (
+              <>
+                <div className="flex space-x-3">
+                  <button
+                      onClick={() => setActiveMode('image_search')}
+                      className={`px-4 py-2 rounded-xl ${
+                          activeMode === 'image_search' ? 'bg-blue-500' : 'bg-slate-700'
+                      }`}
+                  >
+                    以图搜景
+                  </button>
+                  <button
+                      onClick={() => setActiveMode('alignment_person')}
+                      className={`px-4 py-2 rounded-xl ${
+                          activeMode === 'alignment_person'
+                              ? 'bg-blue-500'
+                              : 'bg-slate-700'
+                      }`}
+                  >
+                    对准-人
+                  </button>
+                </div>
+              </>
+            )}
 
-            {activeMode === 'image_search' && (
-                <div className="mt-4">
+            {isStreaming && activeMode === 'image_search' && (
+                <div className="mt-4 space-y-3">
                   <button
                       onClick={handleUploadTemplate}
                       className="w-full py-2 rounded-xl bg-slate-700 text-white"
@@ -2410,7 +2636,7 @@ function LivePusher() {
                 </div>
             )}
 
-            {activeMode === 'alignment_person' && (
+            {isStreaming && activeMode === 'alignment_person' && (
                 <div className="mt-4 space-y-3">
                   <div>
                     <div className="flex items-center justify-between">
@@ -2466,21 +2692,6 @@ function LivePusher() {
                   {alignmentError && (
                       <div className="text-red-400 text-sm">{alignmentError}</div>
                   )}
-                </div>
-            )}
-
-            {activeMode === 'spectator' && (
-                <div className="mt-4 space-y-3">
-                  <div>
-                    <label className="text-slate-300 text-sm">FLV 流地址</label>
-                    <input
-                        type="text"
-                        value={spectatorFlvUrl}
-                        onChange={e => setSpectatorFlvUrl(e.target.value)}
-                        className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
-                        placeholder="http://localhost:1985/rtc/v1/whep/?app=live&stream=stream.flv"
-                    />
-                  </div>
                 </div>
             )}
           </div>

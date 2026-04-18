@@ -30,6 +30,7 @@
 {
   "type": "alignment_person",
   "templateKey": "室内模版V1",
+  "streamUrl": "http://play.uiofield.top/live/stream.flv",
   "scene": "近景",
   "bodyRange": "胸部及以上",
   "ratioMin": "45",
@@ -49,6 +50,7 @@
 | --- | --- | --- | --- |
 | `type` | `string` | 是 | 固定值：`alignment_person` |
 | `templateKey` | `string` | 是 | 当前选中的意图模版名称 |
+| `streamUrl` | `string` | 是 | 由页面中的“视频来源”选项决定。`手机 -> http://play.uiofield.top/live/stream.flv`，`无人机 -> http://localhost:8080/live/stream.flv` |
 | `scene` | `string` | 是 | 由模版中的 `shotType` 解析得到，例如 `B1特写 -> 特写` |
 | `bodyRange` | `string` | 是 | 由模版中的 `bodyRange` 解析得到，例如 `A1头部 -> 头部` |
 | `ratioMin` | `string` | 是 | 由 `subject_ratio_score_table` 中命中单元格解析得到的最小比例 |
@@ -71,6 +73,9 @@
 - `templateKey`
   无固定枚举。
   取值来源：配置服务中 `type = intent_template` 的 `key`。
+- `streamUrl`
+  当前固定枚举值：
+  `http://play.uiofield.top/live/stream.flv`、`http://localhost:8080/live/stream.flv`
 - `ratioMin`
   无固定枚举。
   取值来源：`subject_ratio_score_table` 命中单元格解析后的最小比例，字符串形式下发，例如 `45`、`32`、`22`。
@@ -454,6 +459,7 @@
 {
   "type": "alignment_person",
   "templateKey": "portrait_intent_default",
+  "streamUrl": "http://play.uiofield.top/live/stream.flv",
   "scene": "近景",
   "bodyRange": "胸部及以上",
   "ratioMin": "45",
