@@ -36,7 +36,8 @@ export const DEFAULT_SHOT_TYPE_ITEMS = [
   { code: 'B2', name: '近景' },
   { code: 'B3', name: '中近景' },
   { code: 'B4', name: '中景' },
-  { code: 'B5', name: '远景' }
+  { code: 'B5', name: '中远景' },
+  { code: 'B6', name: '远景' }
 ] as const satisfies ReadonlyArray<ShotTypeConfigItem>;
 
 export const normalizeBodyRangeCode = (value: string) => {
@@ -158,14 +159,14 @@ export const compositionParams = [
     label: '构图方法（D）',
     options: sortOptionValuesByCode([
       'D1居中构图',
-      'D2.1三分线构图H1V1',
-      'D2.2三分线构图H1V2',
-      'D2.3三分线构图H2V1',
-      'D2.4三分线构图H2V2',
-      'D2.5三分线构图H1',
-      'D2.6三分线构图H2',
-      'D2.7三分线构图V1',
-      'D2.8三分线构图V2',
+      'D2.1三分构图H1V1',
+      'D2.2三分构图H1V2',
+      'D2.3三分构图H2V1',
+      'D2.4三分构图H2V2',
+      'D2.5三分构图H1',
+      'D2.6三分构图H2',
+      'D2.7三分构图V1',
+      'D2.8三分构图V2',
       'D3.1对角线构图-H0V0-H3V3',
       'D3.2对角线构图-H0V3-H3V0',
       'D4.1对称构图V1.5',

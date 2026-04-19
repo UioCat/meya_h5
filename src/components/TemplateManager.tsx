@@ -27,6 +27,7 @@ type TemplateManagerProps = {
   embedded?: boolean;
   bodyRangeOptions?: readonly string[];
   shotTypeOptions?: readonly string[];
+  availableShotTypeOptionsByBodyRange?: Record<string, readonly string[]>;
 };
 
 type TemplatePageMode = 'list' | 'detail';
@@ -42,10 +43,14 @@ type FieldConfigItem = {
 
 const createDefaultFields = (
   bodyRangeOptions: readonly string[],
-  shotTypeOptions: readonly string[]
+  shotTypeOptions: readonly string[],
+  availableShotTypeOptionsByBodyRange?: Record<string, readonly string[]>
 ): IntentTemplateFields => ({
   bodyRange: bodyRangeOptions[0] ?? '',
-  shotType: shotTypeOptions[0] ?? '',
+  shotType:
+    availableShotTypeOptionsByBodyRange?.[bodyRangeOptions[0] ?? '']?.[0] ??
+    shotTypeOptions[0] ??
+    '',
   orientation: intentTemplateOptions.orientation[0] ?? '',
   compositionMethod: intentTemplateOptions.compositionMethod[0] ?? '',
   compositionObject: intentTemplateOptions.compositionObject[1] ?? intentTemplateOptions.compositionObject[0] ?? '',
@@ -155,7 +160,12 @@ const validateTemplateDraftWithConfig = (
   return { value: next, error: '' };
 };
 
-function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }: TemplateManagerProps) {
+function TemplateManager({
+  embedded = false,
+  bodyRangeOptions,
+  shotTypeOptions,
+  availableShotTypeOptionsByBodyRange
+}: TemplateManagerProps) {
   const configBaseUrl = 'https://www.uiofield.top/config_server';
   const resolvedBodyRangeOptions =
     bodyRangeOptions && bodyRangeOptions.length > 0 ? [...bodyRangeOptions] : [...intentTemplateOptions.bodyRange];
@@ -163,8 +173,18 @@ function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }
     shotTypeOptions && shotTypeOptions.length > 0 ? [...shotTypeOptions] : [...intentTemplateOptions.shotType];
   const resolvedBodyRangeKey = resolvedBodyRangeOptions.join('|');
   const resolvedShotTypeKey = resolvedShotTypeOptions.join('|');
-  const defaultFields = createDefaultFields(resolvedBodyRangeOptions, resolvedShotTypeOptions);
+  const defaultFields = createDefaultFields(
+    resolvedBodyRangeOptions,
+    resolvedShotTypeOptions,
+    availableShotTypeOptionsByBodyRange
+  );
   const fieldConfig = createFieldConfig(resolvedBodyRangeOptions, resolvedShotTypeOptions);
+
+  const getAvailableShotTypeOptions = (bodyRange: string) => {
+    const matchedOptions = availableShotTypeOptionsByBodyRange?.[bodyRange];
+    if (!matchedOptions) return resolvedShotTypeOptions;
+    return matchedOptions;
+  };
 
   const [items, setItems] = useState<KvItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -208,6 +228,20 @@ function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }
   const selectedItem = selectedKey ? items.find(item => item.key === selectedKey) ?? null : null;
   const selectedParsedValue = selectedItem ? parseTemplateValue(selectedItem.value, fieldConfig, defaultFields) : null;
 
+  const validateDraft = (draft: IntentTemplateDraft) => {
+    const parsed = validateTemplateDraftWithConfig(draft, fieldConfig, defaultFields);
+    if (!parsed.value) {
+      return parsed;
+    }
+
+    const availableShotTypes = getAvailableShotTypeOptions(parsed.value.bodyRange);
+    if (!availableShotTypes.includes(parsed.value.shotType)) {
+      return { value: null, error: '当前身体范围（A）下没有这个可用的景别类型（B）' };
+    }
+
+    return parsed;
+  };
+
   useEffect(() => {
     setDraftForm(prev => {
       const normalizedBodyRange = normalizeOptionValue(prev.bodyRange);
@@ -215,16 +249,23 @@ function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }
         ? normalizedBodyRange
         : defaultFields.bodyRange;
       const normalizedShotType = normalizeOptionValue(prev.shotType);
-      const nextShotType = resolvedShotTypeOptions.includes(normalizedShotType)
+      const availableShotTypes = getAvailableShotTypeOptions(nextBodyRange);
+      const nextShotType = availableShotTypes.includes(normalizedShotType)
         ? normalizedShotType
-        : defaultFields.shotType;
+        : availableShotTypes[0] ?? defaultFields.shotType;
       return {
         ...prev,
         bodyRange: nextBodyRange,
         shotType: nextShotType
       };
     });
-  }, [defaultFields.bodyRange, defaultFields.shotType, resolvedBodyRangeKey, resolvedShotTypeKey]);
+  }, [
+    defaultFields.bodyRange,
+    defaultFields.shotType,
+    resolvedBodyRangeKey,
+    resolvedShotTypeKey,
+    availableShotTypeOptionsByBodyRange
+  ]);
 
   const backToList = () => {
     setPageMode('list');
@@ -284,7 +325,7 @@ function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }
       setError('请先输入模版名称（key）');
       return;
     }
-    const parsed = validateTemplateDraftWithConfig(draftForm, fieldConfig, defaultFields);
+    const parsed = validateDraft(draftForm);
     if (!parsed.value) {
       setError(parsed.error);
       return;
@@ -327,7 +368,7 @@ function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }
   };
 
   const updateTemplate = async (key: string) => {
-    const parsed = validateTemplateDraftWithConfig(draftForm, fieldConfig, defaultFields);
+    const parsed = validateDraft(draftForm);
     if (!parsed.value) {
       setError(parsed.error);
       return;
@@ -351,27 +392,47 @@ function TemplateManager({ embedded = false, bodyRangeOptions, shotTypeOptions }
 
   const renderForm = (form: IntentTemplateDraft, setForm: (next: IntentTemplateDraft) => void) => {
     const setField = <K extends keyof IntentTemplateDraft>(key: K, value: IntentTemplateDraft[K]) => {
+      if (key === 'bodyRange') {
+        const nextBodyRange = value as IntentTemplateDraft['bodyRange'];
+        const availableShotTypes = getAvailableShotTypeOptions(nextBodyRange);
+        const nextShotType = availableShotTypes.includes(form.shotType)
+          ? form.shotType
+          : availableShotTypes[0] ?? '';
+        setForm({ ...form, bodyRange: nextBodyRange, shotType: nextShotType });
+        return;
+      }
       setForm({ ...form, [key]: value });
     };
 
     return (
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {fieldConfig.map(field => (
-          <div key={field.key}>
-            <label className="text-sm text-slate-300">{field.label}</label>
-            <select
-              value={form[field.key]}
-              onChange={event => setField(field.key, event.target.value)}
-              className="mt-1 w-full rounded bg-slate-900 p-2 text-white outline-none"
-            >
-              {field.options.map(option => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </div>
-        ))}
+        {fieldConfig.map(field => {
+          const options = field.key === 'shotType' ? getAvailableShotTypeOptions(form.bodyRange) : field.options;
+          const hasOptions = options.length > 0;
+          const selectedValue = hasOptions ? form[field.key] : '';
+
+          return (
+            <div key={field.key}>
+              <label className="text-sm text-slate-300">{field.label}</label>
+              <select
+                value={selectedValue}
+                onChange={event => setField(field.key, event.target.value)}
+                disabled={!hasOptions}
+                className="mt-1 w-full rounded bg-slate-900 p-2 text-white outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {!hasOptions ? (
+                  <option value="">当前 A 下暂无可用 B</option>
+                ) : (
+                  options.map(option => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+          );
+        })}
       </div>
     );
   };

@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ChevronDown, Pencil, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import TemplateManager from './TemplateManager';
 import {
@@ -9,7 +9,6 @@ import {
   compositionParams,
   formatBodyRangeValue,
   formatShotTypeValue,
-  intentTemplateOptions,
   isValidBodyRangeCode,
   isValidShotTypeCode,
   normalizeBodyRangeCode,
@@ -112,7 +111,7 @@ const DEFAULT_SHOT_RATIO_CELLS = [
   { scene: 'B3中近景', range: 'A3腰部及以上', value: '40' },
   { scene: 'B4中景', range: 'A4膝盖及以上', value: '30' },
   { scene: 'B4中景', range: 'A5全身', value: '15' },
-  { scene: 'B5远景', range: 'A5全身', value: '5' }
+  { scene: 'B6远景', range: 'A5全身', value: '5' }
 ] as const;
 
 type SubjectRatioEvaluationCell = {
@@ -139,7 +138,7 @@ const DEFAULT_SUBJECT_RATIO_SCORE_CELLS = [
   { scene: 'B3中近景', range: 'A3腰部及以上', min: '32', max: '45' },
   { scene: 'B4中景', range: 'A4膝盖及以上', min: '22', max: '32' },
   { scene: 'B4中景', range: 'A5全身', min: '8', max: '22' },
-  { scene: 'B5远景', range: 'A5全身', min: '1', max: '8' }
+  { scene: 'B6远景', range: 'A5全身', min: '1', max: '8' }
 ] as const;
 
 const isShotRatioCellEmpty = (value: string) => {
@@ -608,12 +607,30 @@ const serializeShotRatioMatrix = (
     ])
   );
 
+const buildAvailableShotTypeOptionsByBodyRange = (
+  bodyRangeOptions: readonly string[],
+  shotTypeOptions: readonly string[],
+  shotRatioMatrix: ShotRatioMatrix,
+  subjectRatioMatrix: SubjectRatioEvaluationMatrix
+) =>
+  Object.fromEntries(
+    bodyRangeOptions.map(range => [
+      range,
+      shotTypeOptions.filter(scene => {
+        const ratioValue = shotRatioMatrix[scene]?.[range] ?? '-';
+        const subjectRatioCell = normalizeSubjectRatioEvaluationCell(subjectRatioMatrix[scene]?.[range]);
+        return !isShotRatioCellEmpty(ratioValue) && Boolean(subjectRatioCell);
+      })
+    ])
+  );
+
 const subjectOffsetRows = [
   { key: 'B1', code: 'B1', scene: '特写' },
   { key: 'B2', code: 'B2', scene: '近景' },
   { key: 'B3', code: 'B3', scene: '中近景' },
   { key: 'B4', code: 'B4', scene: '中景' },
-  { key: 'B5', code: 'B5', scene: '远景' }
+  { key: 'B5', code: 'B5', scene: '中远景' },
+  { key: 'B6', code: 'B6', scene: '远景' }
 ] as const;
 
 type SubjectOffsetRowKey = (typeof subjectOffsetRows)[number]['key'];
@@ -641,7 +658,8 @@ const createDefaultSubjectOffsetMap = (): SubjectOffsetMap => ({
   B2: { scene: '近景', x1: '10', x2: '16' },
   B3: { scene: '中近景', x1: '8', x2: '13' },
   B4: { scene: '中景', x1: '6', x2: '10' },
-  B5: { scene: '远景', x1: '3', x2: '6' }
+  B5: { scene: '中远景', x1: '3', x2: '6' },
+  B6: { scene: '远景', x1: '3', x2: '6' }
 });
 
 const cloneSubjectOffsetMap = (map: SubjectOffsetMap): SubjectOffsetMap => ({
@@ -649,7 +667,8 @@ const cloneSubjectOffsetMap = (map: SubjectOffsetMap): SubjectOffsetMap => ({
   B2: { ...map.B2 },
   B3: { ...map.B3 },
   B4: { ...map.B4 },
-  B5: { ...map.B5 }
+  B5: { ...map.B5 },
+  B6: { ...map.B6 }
 });
 
 const parseSubjectOffsetCellNumbers = (cell: string) => {
@@ -964,6 +983,12 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
   const shotTypeValues = shotTypeOptions.map(item => item.value);
   const bodyRangeKey = bodyRangeValues.join('|');
   const shotTypeKey = shotTypeValues.join('|');
+  const availableShotTypeOptionsByBodyRange = buildAvailableShotTypeOptionsByBodyRange(
+    bodyRangeValues,
+    shotTypeValues,
+    shotRatioList,
+    subjectRatioMatrix
+  );
 
   const handleUnsupported = () => {
     notify('目前当前还未支持');
@@ -1084,6 +1109,34 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
     setSubjectRatioMatrix(prev => normalizeSubjectRatioEvaluationMatrix(prev, bodyRangeValues, shotTypeValues));
     setSubjectRatioDraft(prev => normalizeSubjectRatioEvaluationMatrix(prev, bodyRangeValues, shotTypeValues));
   }, [bodyRangeKey, shotTypeKey]);
+
+  useEffect(() => {
+    if (activeTab !== 'template') return;
+    if (!bodyRangeLoaded && !bodyRangeLoading) {
+      void loadBodyRangeConfig();
+    }
+    if (!shotTypeLoaded && !shotTypeLoading) {
+      void loadShotTypeConfig();
+    }
+  }, [activeTab, bodyRangeLoaded, bodyRangeLoading, shotTypeLoaded, shotTypeLoading]);
+
+  useEffect(() => {
+    if (activeTab !== 'template' || !bodyRangeLoaded || !shotTypeLoaded) return;
+    if (!shotRatioLoaded && !shotRatioLoading) {
+      void loadShotRatioConfig();
+    }
+    if (!subjectRatioLoaded && !subjectRatioLoading) {
+      void loadSubjectRatioConfig();
+    }
+  }, [
+    activeTab,
+    bodyRangeLoaded,
+    shotTypeLoaded,
+    shotRatioLoaded,
+    shotRatioLoading,
+    subjectRatioLoaded,
+    subjectRatioLoading
+  ]);
 
   const getTemplateFieldValue = (value: unknown, aliases: string[]) => {
     let source = value;
@@ -2161,15 +2214,15 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
                                                     placeholder="名称"
                                                     className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-blue-400"
                                                   />
-                                                  <div className="flex items-center gap-2">
+                                                  <div className="flex items-center justify-end gap-2">
                                                     <button
                                                       type="button"
                                                       onClick={() => void (param.key === 'A' ? handleSubmitBodyRange() : handleSubmitShotType())}
                                                       disabled={param.key === 'A' ? bodyRangeSaving : shotTypeSaving}
-                                                      className="inline-flex h-[52px] min-w-[52px] items-center justify-center rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-4 text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
-                                                      title={(param.key === 'A' ? editingBodyRangeValue : editingShotTypeValue) ? '保存修改' : '新增'}
+                                                      className="inline-flex h-[52px] min-w-[88px] items-center justify-center rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-4 text-sm font-medium text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                                                      title="保存"
                                                     >
-                                                      {(param.key === 'A' ? editingBodyRangeValue : editingShotTypeValue) ? <Check className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+                                                      <span>保存</span>
                                                     </button>
                                                     {(param.key === 'A' ? editingBodyRangeValue : editingShotTypeValue) && (
                                                       <button
@@ -2250,48 +2303,9 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
 
                         {isShotRatioExpanded && (
                           <div className="border-t border-slate-700 p-3 sm:p-4">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="min-w-0 flex-1">
-                                <div className="text-sm text-slate-400">
-                                  行来自景别类型（B），列来自身体范围（A），单元格只填写 0 到 100 的数字，展示时自动补 %
-                                </div>
-                              </div>
-                              <div className="flex w-full justify-end gap-2 sm:w-auto sm:flex-none">
-                                {isShotRatioEditing ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setShotRatioDraft(cloneShotRatioMatrix(shotRatioList));
-                                        setIsShotRatioEditing(false);
-                                        setShotRatioError('');
-                                      }}
-                                      className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700"
-                                    >
-                                      取消
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={handleSaveShotRatio}
-                                      disabled={shotRatioSaving}
-                                      className="rounded-lg bg-blue-500 px-3 py-2 text-sm text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      {shotRatioSaving ? '保存中...' : '保存'}
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setShotRatioDraft(cloneShotRatioMatrix(shotRatioList));
-                                      setIsShotRatioEditing(true);
-                                    }}
-                                    disabled={shotRatioLoading}
-                                    className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                  >
-                                    编辑
-                                  </button>
-                                )}
+                            <div className="min-w-0">
+                              <div className="text-sm text-slate-400">
+                                行来自景别类型（B），列来自身体范围（A），单元格只填写 0 到 100 的数字，展示时自动补 %
                               </div>
                             </div>
 
@@ -2378,6 +2392,44 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
                                 </table>
                               </div>
                             )}
+
+                            <div className="mt-4 flex justify-end gap-2">
+                              {isShotRatioEditing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShotRatioDraft(cloneShotRatioMatrix(shotRatioList));
+                                      setIsShotRatioEditing(false);
+                                      setShotRatioError('');
+                                    }}
+                                    className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700"
+                                  >
+                                    取消
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleSaveShotRatio}
+                                    disabled={shotRatioSaving}
+                                    className="rounded-lg bg-blue-500 px-3 py-2 text-sm text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {shotRatioSaving ? '保存中...' : '保存'}
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShotRatioDraft(cloneShotRatioMatrix(shotRatioList));
+                                    setIsShotRatioEditing(true);
+                                  }}
+                                  disabled={shotRatioLoading}
+                                  className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  编辑
+                                </button>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -2404,48 +2456,9 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
 
                         {isSubjectRatioExpanded && (
                           <div className="border-t border-slate-700 p-3 sm:p-4">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="min-w-0 flex-1">
-                                <div className="text-sm text-slate-400">
-                                  行来自景别类型（B），列来自身体范围（A），默认按前开后闭区间 `(x%,y%]` 展示，编辑时只需填写两个整数
-                                </div>
-                              </div>
-                              <div className="flex w-full justify-end gap-2 sm:w-auto sm:flex-none">
-                                {isSubjectRatioEditing ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setSubjectRatioDraft(cloneSubjectRatioEvaluationMatrix(subjectRatioMatrix));
-                                        setIsSubjectRatioEditing(false);
-                                        setSubjectRatioError('');
-                                      }}
-                                      className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700"
-                                    >
-                                      取消
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={handleSaveSubjectRatio}
-                                      disabled={subjectRatioSaving}
-                                      className="rounded-lg bg-blue-500 px-3 py-2 text-sm text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      {subjectRatioSaving ? '保存中...' : '保存'}
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSubjectRatioDraft(cloneSubjectRatioEvaluationMatrix(subjectRatioMatrix));
-                                      setIsSubjectRatioEditing(true);
-                                    }}
-                                    disabled={subjectRatioLoading}
-                                    className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                  >
-                                    编辑
-                                  </button>
-                                )}
+                            <div className="min-w-0">
+                              <div className="text-sm text-slate-400">
+                                行来自景别类型（B），列来自身体范围（A），默认按前开后闭区间 `(x%,y%]` 展示，编辑时只需填写两个整数
                               </div>
                             </div>
 
@@ -2554,6 +2567,44 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
                                 </div>
                               </div>
                             )}
+
+                            <div className="mt-4 flex justify-end gap-2">
+                              {isSubjectRatioEditing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSubjectRatioDraft(cloneSubjectRatioEvaluationMatrix(subjectRatioMatrix));
+                                      setIsSubjectRatioEditing(false);
+                                      setSubjectRatioError('');
+                                    }}
+                                    className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700"
+                                  >
+                                    取消
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleSaveSubjectRatio}
+                                    disabled={subjectRatioSaving}
+                                    className="rounded-lg bg-blue-500 px-3 py-2 text-sm text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {subjectRatioSaving ? '保存中...' : '保存'}
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSubjectRatioDraft(cloneSubjectRatioEvaluationMatrix(subjectRatioMatrix));
+                                    setIsSubjectRatioEditing(true);
+                                  }}
+                                  disabled={subjectRatioLoading}
+                                  className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  编辑
+                                </button>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -2580,48 +2631,9 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
 
                         {isSubjectOffsetExpanded && (
                           <div className="border-t border-slate-700 p-3 sm:p-4">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="min-w-0 flex-1">
-                                <div className="text-sm text-slate-400">
-                                  主体偏离度主要描述头部锚点到最佳构图点的距离，占整个画面对角线长度的百分比。页面按好、一般、差三档展示，编辑时只需调整两个分界点数字。
-                                </div>
-                              </div>
-                              <div className="flex w-full justify-end gap-2 sm:w-auto sm:flex-none">
-                                {isSubjectOffsetEditing ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setSubjectOffsetDraft(cloneSubjectOffsetMap(subjectOffsetMap));
-                                        setIsSubjectOffsetEditing(false);
-                                        setSubjectOffsetError('');
-                                      }}
-                                      className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700"
-                                    >
-                                      取消
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={handleSaveSubjectOffset}
-                                      disabled={subjectOffsetSaving}
-                                      className="rounded-lg bg-blue-500 px-3 py-2 text-sm text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      {subjectOffsetSaving ? '保存中...' : '保存'}
-                                    </button>
-                                  </>
-                                ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setSubjectOffsetDraft(cloneSubjectOffsetMap(subjectOffsetMap));
-                                        setIsSubjectOffsetEditing(true);
-                                      }}
-                                    disabled={subjectOffsetLoading}
-                                    className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                  >
-                                    编辑
-                                  </button>
-                                )}
+                            <div className="min-w-0">
+                              <div className="text-sm text-slate-400">
+                                主体偏离度主要描述头部锚点到最佳构图点的距离，占整个画面对角线长度的百分比。页面按好、一般、差三档展示，编辑时只需调整两个分界点数字。
                               </div>
                             </div>
 
@@ -2769,6 +2781,44 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
                                 </div>
                               </div>
                             )}
+
+                            <div className="mt-4 flex justify-end gap-2">
+                              {isSubjectOffsetEditing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSubjectOffsetDraft(cloneSubjectOffsetMap(subjectOffsetMap));
+                                      setIsSubjectOffsetEditing(false);
+                                      setSubjectOffsetError('');
+                                    }}
+                                    className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700"
+                                  >
+                                    取消
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleSaveSubjectOffset}
+                                    disabled={subjectOffsetSaving}
+                                    className="rounded-lg bg-blue-500 px-3 py-2 text-sm text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {subjectOffsetSaving ? '保存中...' : '保存'}
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSubjectOffsetDraft(cloneSubjectOffsetMap(subjectOffsetMap));
+                                    setIsSubjectOffsetEditing(true);
+                                  }}
+                                  disabled={subjectOffsetLoading}
+                                  className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  编辑
+                                </button>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -2789,27 +2839,8 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
 
                         {isSmileExpanded && (
                           <div className="border-t border-slate-700 p-4">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="min-w-0 flex-1 text-sm text-slate-400">
-                                支持在右上角统一保存或重置当前笑容检测参数配置
-                              </div>
-                              <div className="flex w-full justify-end gap-2 sm:w-auto sm:flex-none">
-                                <button
-                                  type="button"
-                                  onClick={() => setSmileDraft({ ...smileConfig })}
-                                  className="rounded-lg border border-slate-600 px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-700"
-                                >
-                                  重置
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={handleSaveSmileConfig}
-                                  disabled={smileSaving}
-                                  className="rounded-lg bg-violet-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  {smileSaving ? '保存中...' : '保存'}
-                                </button>
-                              </div>
+                            <div className="text-sm text-slate-400">
+                              支持在右下角统一保存或重置当前笑容检测参数配置
                             </div>
 
                             {smileError && (
@@ -2965,6 +2996,24 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
                                 </div>
                               </div>
                             )}
+
+                            <div className="mt-4 flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setSmileDraft({ ...smileConfig })}
+                                className="rounded-lg border border-slate-600 px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-700"
+                              >
+                                重置
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSaveSmileConfig}
+                                disabled={smileSaving}
+                                className="rounded-lg bg-violet-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {smileSaving ? '保存中...' : '保存'}
+                              </button>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -3229,7 +3278,12 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
             </div>
 
             <div className={activeTab === 'template' ? 'block' : 'hidden'}>
-              <TemplateManager embedded bodyRangeOptions={bodyRangeValues} shotTypeOptions={shotTypeValues} />
+              <TemplateManager
+                embedded
+                bodyRangeOptions={bodyRangeValues}
+                shotTypeOptions={shotTypeValues}
+                availableShotTypeOptionsByBodyRange={availableShotTypeOptionsByBodyRange}
+              />
             </div>
           </div>
         </div>

@@ -88,7 +88,7 @@
 - `scene`
   由模版中的 `shotType` 去掉编码前缀后得到。
   当前默认枚举值：
-  `特写`、`近景`、`中近景`、`中景`、`远景`
+  `特写`、`近景`、`中近景`、`中景`、`中远景`、`远景`
 - `bodyRange`
   由模版中的 `bodyRange` 去掉编码前缀后得到。
   当前默认枚举值：
@@ -100,7 +100,7 @@
 - `compositionMethod`
   由模版中的 `compositionMethod` 去掉编码前缀后得到。
   当前枚举值：
-  `居中构图`、`三分线构图H1V1`、`三分线构图H1V2`、`三分线构图H2V1`、`三分线构图H2V2`、`三分线构图H1`、`三分线构图H2`、`三分线构图V1`、`三分线构图V2`、`对角线构图-H0V0-H3V3`、`对角线构图-H0V3-H3V0`、`对称构图V1.5`、`对称构图H1.5`
+  `居中构图`、`三分构图H1V1`、`三分构图H1V2`、`三分构图H2V1`、`三分构图H2V2`、`三分构图H1`、`三分构图H2`、`三分构图V1`、`三分构图V2`、`对角线构图-H0V0-H3V3`、`对角线构图-H0V3-H3V0`、`对称构图V1.5`、`对称构图H1.5`
 - `compositionObject`
   直接使用模版中的枚举值。
   当前枚举值：
@@ -184,7 +184,7 @@
     "A4膝盖及以上": "30%",
     "A5全身": "15%"
   },
-  "B5远景": {
+  "B6远景": {
     "A5全身": "<=5%"
   }
 }
@@ -281,6 +281,11 @@
 - `notify`
 - `alignment_done`
 
+补充说明：
+
+- `gimbal_adjust.param.pitch` 和 `gimbal_adjust.param.yaw` 现在表示云台绝对目标角，取值范围均为 `-90 ~ 90`。
+- 在算法启动时，控制层会在 `take_off` 之后额外发送一条 `gimbal_adjust` 指令，将云台归零到 `pitch = 0`、`yaw = 0`。
+
 ### 6.3 中心点阶段额外 Overlay 字段
 
 当 `currentStageCode = center` 时，运行时回传消息还会额外带上 `compositionOverlay`，用于前端直接绘制最后阶段的构图引导层。
@@ -337,7 +342,24 @@
 }
 ```
 
-#### 6.4.2 中心点阶段控制消息
+#### 6.4.2 启动时云台归零消息
+
+```json
+{
+  "taskId": "123",
+  "command": "gimbal_adjust",
+  "param": {
+    "pitch": 0,
+    "yaw": 0
+  },
+  "algoType": "alignment_person",
+  "识别时间": "14:23:09",
+  "currentStageCode": "height",
+  "currentStage": "定高"
+}
+```
+
+#### 6.4.3 中心点阶段控制消息
 
 ```json
 {
@@ -352,7 +374,7 @@
   "currentStageCode": "center",
   "currentStage": "中心点对准",
   "compositionOverlay": {
-    "compositionMethod": "三分线构图H1V1",
+    "compositionMethod": "三分构图H1V1",
     "compositionMethodCode": "D2.1",
     "compositionObject": "双眼中心点",
     "targetCircle": {
@@ -380,7 +402,7 @@
 }
 ```
 
-#### 6.4.3 阶段完成通知
+#### 6.4.4 阶段完成通知
 
 ```json
 {
@@ -393,7 +415,7 @@
 }
 ```
 
-#### 6.4.4 最终完成消息
+#### 6.4.5 最终完成消息
 
 ```json
 {
