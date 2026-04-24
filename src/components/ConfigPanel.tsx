@@ -47,7 +47,6 @@ const basicConfigSections = [
 const PENDING_CONTROL_MESSAGE = '数据还未接入到主控';
 const pendingCompositionParamKeys = new Set(['K']);
 const pendingConfigSections = new Set([
-  '五、引导线配置',
   '七、拍照阈值设置'
 ]);
 
@@ -94,6 +93,8 @@ const PHOTO_THRESHOLD_CONFIG_TYPE = 'basic_config';
 const PHOTO_THRESHOLD_CONFIG_KEY = 'photo_threshold_settings';
 const SMILE_CONFIG_TYPE = 'basic_config';
 const SMILE_CONFIG_KEY = 'smile_detection_settings';
+const GUIDE_LINE_CONFIG_TYPE = 'basic_config';
+const GUIDE_LINE_CONFIG_KEY = 'guide_line_settings';
 type ShotRatioMatrix = Record<string, Record<string, string>>;
 
 const parseJsonSafely = (text: string) => {
@@ -793,6 +794,11 @@ type PhotoThresholdItem = {
 };
 type PhotoThresholdMap = Record<PhotoThresholdRowKey, PhotoThresholdItem>;
 
+type GuideLineConfig = {
+  useGuideLinePro: boolean;
+  showOtherLinesWhenPro: boolean;
+};
+
 const createDefaultPhotoThresholdMap = (): PhotoThresholdMap => ({
   body_overlap: { enabled: true, operator: '>', value: '90' },
   face_orientation: { enabled: true, operator: '>', value: '70' },
@@ -837,6 +843,41 @@ const parsePhotoThresholdMap = (value: unknown): PhotoThresholdMap | null => {
   }
 
   return next;
+};
+
+const defaultGuideLineConfig = (): GuideLineConfig => ({
+  useGuideLinePro: false,
+  showOtherLinesWhenPro: false
+});
+
+const parseGuideLineConfig = (value: unknown): GuideLineConfig | null => {
+  let source = value;
+  if (typeof source === 'string') {
+    source = parseJsonSafely(source);
+  }
+  if (!source || typeof source !== 'object') return null;
+  const obj = source as Record<string, unknown>;
+
+  const useGuideLinePro =
+    typeof obj.useGuideLinePro === 'boolean'
+      ? obj.useGuideLinePro
+      : typeof obj.guideLineProEnabled === 'boolean'
+        ? obj.guideLineProEnabled
+        : false;
+
+  const showOtherLinesWhenPro =
+    typeof obj.showOtherLinesWhenPro === 'boolean'
+      ? obj.showOtherLinesWhenPro
+      : typeof obj.showOtherGuideLines === 'boolean'
+        ? obj.showOtherGuideLines
+        : typeof obj.showOtherLines === 'boolean'
+          ? obj.showOtherLines
+          : false;
+
+  return {
+    useGuideLinePro,
+    showOtherLinesWhenPro: useGuideLinePro ? showOtherLinesWhenPro : false
+  };
 };
 
 type SmileDetectionConfig = {
@@ -967,6 +1008,14 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
   const [isPhotoThresholdEditing, setIsPhotoThresholdEditing] = useState(false);
   const [photoThresholdMap, setPhotoThresholdMap] = useState<PhotoThresholdMap>(createDefaultPhotoThresholdMap);
   const [photoThresholdDraft, setPhotoThresholdDraft] = useState<PhotoThresholdMap>(createDefaultPhotoThresholdMap);
+  const [isGuideLineExpanded, setIsGuideLineExpanded] = useState(false);
+  const [guideLineLoaded, setGuideLineLoaded] = useState(false);
+  const [guideLineExists, setGuideLineExists] = useState(false);
+  const [guideLineLoading, setGuideLineLoading] = useState(false);
+  const [guideLineSaving, setGuideLineSaving] = useState(false);
+  const [guideLineError, setGuideLineError] = useState('');
+  const [guideLineConfig, setGuideLineConfig] = useState<GuideLineConfig>(defaultGuideLineConfig);
+  const [guideLineDraft, setGuideLineDraft] = useState<GuideLineConfig>(defaultGuideLineConfig);
   const [isSmileExpanded, setIsSmileExpanded] = useState(false);
   const [smileLoaded, setSmileLoaded] = useState(false);
   const [smileExists, setSmileExists] = useState(false);
@@ -1879,6 +1928,81 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
     }
   };
 
+  const loadGuideLineConfig = async () => {
+    setGuideLineLoading(true);
+    setGuideLineError('');
+    try {
+      const response = await fetch(
+        `${CONFIG_SERVER_BASE_URL}/kv?type=${encodeURIComponent(GUIDE_LINE_CONFIG_TYPE)}&key=${encodeURIComponent(GUIDE_LINE_CONFIG_KEY)}`
+      );
+      const text = await response.text();
+      const data = parseJsonSafely(text) as { value?: unknown; error?: string } | null;
+      if (response.status === 404) {
+        const next = defaultGuideLineConfig();
+        setGuideLineConfig(next);
+        setGuideLineDraft({ ...next });
+        setGuideLineExists(false);
+        setGuideLineLoaded(true);
+        return;
+      }
+      if (!response.ok) {
+        throw new Error((data && typeof data.error === 'string' && data.error) || `HTTP ${response.status}`);
+      }
+      const next = parseGuideLineConfig(data?.value) || defaultGuideLineConfig();
+      setGuideLineConfig(next);
+      setGuideLineDraft({ ...next });
+      setGuideLineExists(true);
+      setGuideLineLoaded(true);
+    } catch (error) {
+      setGuideLineError((error as Error).message || '加载引导线配置失败');
+    } finally {
+      setGuideLineLoading(false);
+    }
+  };
+
+  const toggleGuideLineSection = async () => {
+    const nextExpanded = !isGuideLineExpanded;
+    setIsGuideLineExpanded(nextExpanded);
+    if (nextExpanded && !guideLineLoaded && !guideLineLoading) {
+      await loadGuideLineConfig();
+    }
+  };
+
+  const handleSaveGuideLineConfig = async () => {
+    setGuideLineSaving(true);
+    setGuideLineError('');
+    try {
+      const normalizedDraft: GuideLineConfig = {
+        useGuideLinePro: guideLineDraft.useGuideLinePro,
+        showOtherLinesWhenPro: guideLineDraft.useGuideLinePro ? guideLineDraft.showOtherLinesWhenPro : false
+      };
+      const payload = {
+        type: GUIDE_LINE_CONFIG_TYPE,
+        key: GUIDE_LINE_CONFIG_KEY,
+        value: normalizedDraft
+      };
+      const path = guideLineExists ? '/kv/update' : '/kv/create';
+      const response = await fetch(`${CONFIG_SERVER_BASE_URL}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const text = await response.text();
+      const data = parseJsonSafely(text) as { error?: string } | null;
+      if (!response.ok) {
+        throw new Error((data && typeof data.error === 'string' && data.error) || `HTTP ${response.status}`);
+      }
+      setGuideLineConfig(normalizedDraft);
+      setGuideLineDraft({ ...normalizedDraft });
+      setGuideLineExists(true);
+      notify('引导线配置已保存');
+    } catch (error) {
+      setGuideLineError((error as Error).message || '保存引导线配置失败');
+    } finally {
+      setGuideLineSaving(false);
+    }
+  };
+
   const loadSmileConfig = async () => {
     setSmileLoading(true);
     setSmileError('');
@@ -2279,6 +2403,138 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
                           </span>
                           <PendingInfoHint />
                         </div>
+                      </div>
+                    );
+                  }
+
+                  if (section === '五、引导线配置') {
+                    const activeGuideLineConfig = guideLineDraft;
+                    return (
+                      <div key={section} className="rounded-xl border border-slate-700 bg-slate-800">
+                        <button
+                          type="button"
+                          onClick={toggleGuideLineSection}
+                          className="flex w-full items-center justify-between px-4 py-4 text-left text-white transition hover:bg-slate-700 sm:px-5"
+                        >
+                          <span className="text-base font-medium leading-tight sm:text-lg">
+                            {section}
+                          </span>
+                          <ChevronDown
+                            className={`h-5 w-5 flex-none text-slate-400 transition ${
+                              isGuideLineExpanded ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </button>
+
+                        {isGuideLineExpanded && (
+                          <div className="border-t border-slate-700 p-3 sm:p-4">
+                            <div className="text-sm text-slate-400">
+                              这里仅保留两个引导线显示开关，不再展示旧的任务 ID、超时、上报间隔、接口地址和鉴权参数。
+                            </div>
+
+                            {guideLineError && (
+                              <div className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                                {guideLineError}
+                              </div>
+                            )}
+
+                            {guideLineLoading ? (
+                              <div className="mt-4 text-sm text-slate-400">加载中...</div>
+                            ) : (
+                              <div className="mt-4 space-y-4">
+                                <div className="rounded-xl border border-slate-700 bg-slate-900 p-4">
+                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="min-w-0">
+                                      <div className="text-base font-semibold text-white">是否使用引导线 pro</div>
+                                      <div className="mt-1 text-sm text-slate-400">
+                                        开启后使用引导线 pro 展示方案。
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                      <label className="flex items-center gap-2 text-base text-slate-100">
+                                        <input
+                                          type="radio"
+                                          checked={activeGuideLineConfig.useGuideLinePro}
+                                          onChange={() =>
+                                            setGuideLineDraft(prev => ({ ...prev, useGuideLinePro: true }))
+                                          }
+                                        />
+                                        <span>是</span>
+                                      </label>
+                                      <label className="flex items-center gap-2 text-base text-slate-100">
+                                        <input
+                                          type="radio"
+                                          checked={!activeGuideLineConfig.useGuideLinePro}
+                                          onChange={() =>
+                                            setGuideLineDraft(prev => ({
+                                              ...prev,
+                                              useGuideLinePro: false,
+                                              showOtherLinesWhenPro: false
+                                            }))
+                                          }
+                                        />
+                                        <span>否</span>
+                                      </label>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {activeGuideLineConfig.useGuideLinePro && (
+                                  <div className="rounded-xl border border-slate-700 bg-slate-900 p-4">
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                      <div className="min-w-0">
+                                        <div className="text-base font-semibold text-white">展示其他线条</div>
+                                        <div className="mt-1 text-sm text-slate-400">
+                                          仅在启用引导线 pro 时生效，用于控制是否同时显示其他辅助线条。
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-4">
+                                        <label className="flex items-center gap-2 text-base text-slate-100">
+                                          <input
+                                            type="radio"
+                                            checked={activeGuideLineConfig.showOtherLinesWhenPro}
+                                            onChange={() =>
+                                              setGuideLineDraft(prev => ({ ...prev, showOtherLinesWhenPro: true }))
+                                            }
+                                          />
+                                          <span>是</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 text-base text-slate-100">
+                                          <input
+                                            type="radio"
+                                            checked={!activeGuideLineConfig.showOtherLinesWhenPro}
+                                            onChange={() =>
+                                              setGuideLineDraft(prev => ({ ...prev, showOtherLinesWhenPro: false }))
+                                            }
+                                          />
+                                          <span>否</span>
+                                        </label>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div className="flex justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setGuideLineDraft({ ...guideLineConfig })}
+                                    className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700"
+                                  >
+                                    重置
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleSaveGuideLineConfig}
+                                    disabled={guideLineSaving}
+                                    className="rounded-lg bg-blue-500 px-3 py-2 text-sm text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {guideLineSaving ? '保存中...' : '保存'}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   }
