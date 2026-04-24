@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Camera, ChevronUp, ChevronDown, Radio, Video, VideoOff } from 'lucide-react';
+import { Camera, ChevronUp, ChevronDown, Radio, Video } from 'lucide-react';
 import {
   intentTemplateOptions,
   normalizeCompositionObjectValue,
@@ -60,6 +60,10 @@ type SubjectRatioScoreConfigItem = {
   ratioMax: string;
 };
 
+type AlgoType = 'upload_template' | 'alignment_person' | 'guide_line';
+
+type ActiveMode = 'image_search' | 'alignment_person' | 'guide_line' | null;
+
 const CENTER_ALIGNMENT_GUIDE_VIEWBOX = 300;
 
 const CENTER_ALIGNMENT_GUIDE_TOP_LABELS = [
@@ -94,6 +98,15 @@ const CENTER_ALIGNMENT_GUIDE_POINTS = [
 
 const HEIGHT_STAGE_RANGE_HALF_RATIO = 0.035;
 
+// Semantic overlay colors: detected content stays green, target regions stay red.
+const ALGO_RESULT_COLOR = '#34D399';
+const ALGO_RESULT_COLOR_SOFT = 'rgba(52, 211, 153, 0.9)';
+const ALGO_TARGET_COLOR = '#EF4444';
+const ALGO_TARGET_COLOR_SOFT = 'rgba(239, 68, 68, 0.8)';
+const ALGO_TARGET_COLOR_WEAK = 'rgba(239, 68, 68, 0.7)';
+const ALGO_TARGET_COLOR_FAINT = 'rgba(239, 68, 68, 0.6)';
+const ALGO_RESULT_LABEL_COLOR = '#A7F3D0';
+
 const parseOverlayPoint = (value: unknown): [number, number] | null => {
   if (!Array.isArray(value) || value.length !== 2) return null;
   const [x, y] = value;
@@ -113,6 +126,147 @@ const parseOverlayBox = (value: unknown): [number, number, number, number] | nul
     return null;
   }
   return [x, y, width, height];
+};
+
+const normalizeAlgoType = (value: unknown): AlgoType | null => {
+  if (value === 'upload_template' || value === 'alignment_person' || value === 'guide_line') {
+    return value;
+  }
+  if (value === 'guideline' || value === 'guide_line_detect') {
+    return 'guide_line';
+  }
+  return null;
+};
+
+type GuideLineInfo = {
+  statusCode?: number;
+  statusMessage?: string;
+  taskId?: string;
+  lineCount?: number;
+  guideLines: Array<{
+    id: number | string;
+    points?: [[number, number], [number, number]];
+    pointsNorm?: [[number, number], [number, number]];
+  }>;
+  frameSize?: {
+    width: number;
+    height: number;
+  };
+  resultUrl?: string;
+  apiTaskId?: string;
+};
+
+const parseGuideLineSegmentPoints = (
+  value: unknown
+): [[number, number], [number, number]] | undefined => {
+  if (!Array.isArray(value) || value.length !== 2) return undefined;
+  const start = parseOverlayPoint(value[0]);
+  const end = parseOverlayPoint(value[1]);
+  if (!start || !end) return undefined;
+  return [start, end];
+};
+
+const parseGuideLineResult = (value: unknown): GuideLineInfo | null => {
+  if (!value || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  const linesSource = Array.isArray(obj.guideLines)
+    ? obj.guideLines
+    : Array.isArray(obj.guide_lines)
+      ? obj.guide_lines
+      : [];
+
+  const guideLines: GuideLineInfo['guideLines'] = [];
+  linesSource.forEach((line, index) => {
+    if (!line || typeof line !== 'object') return;
+    const lineObj = line as Record<string, unknown>;
+    const points = parseGuideLineSegmentPoints(lineObj.points);
+    const pointsNorm = parseGuideLineSegmentPoints(lineObj.pointsNorm ?? lineObj.points_norm);
+    if (!points && !pointsNorm) return;
+    const rawId = lineObj.id;
+    guideLines.push({
+      id:
+        typeof rawId === 'number' || typeof rawId === 'string'
+          ? rawId
+          : index,
+      points,
+      pointsNorm
+    });
+  });
+
+  const frameSizeSource =
+    obj.frameSize && typeof obj.frameSize === 'object'
+      ? (obj.frameSize as Record<string, unknown>)
+      : obj.frame_size && typeof obj.frame_size === 'object'
+        ? (obj.frame_size as Record<string, unknown>)
+        : null;
+  const frameWidth = frameSizeSource?.width;
+  const frameHeight = frameSizeSource?.height;
+  const frameSize =
+    typeof frameWidth === 'number' &&
+    typeof frameHeight === 'number' &&
+    frameWidth > 0 &&
+    frameHeight > 0
+      ? { width: frameWidth, height: frameHeight }
+      : undefined;
+
+  const statusCode =
+    typeof obj.statusCode === 'number'
+      ? obj.statusCode
+      : typeof obj.status_code === 'number'
+        ? obj.status_code
+        : undefined;
+  const statusMessage =
+    typeof obj.statusMessage === 'string'
+      ? obj.statusMessage
+      : typeof obj.status_message === 'string'
+        ? obj.status_message
+        : undefined;
+  const taskId =
+    typeof obj.taskId === 'string'
+      ? obj.taskId
+      : typeof obj.task_id === 'string'
+        ? obj.task_id
+        : undefined;
+  const lineCount =
+    typeof obj.lineCount === 'number'
+      ? obj.lineCount
+      : typeof obj.line_count === 'number'
+        ? obj.line_count
+        : guideLines.length;
+  const resultUrl =
+    typeof obj.resultUrl === 'string'
+      ? obj.resultUrl
+      : typeof obj.result_url === 'string'
+        ? obj.result_url
+        : undefined;
+  const apiTaskId =
+    typeof obj.apiTaskId === 'string'
+      ? obj.apiTaskId
+      : typeof obj.api_task_id === 'string'
+        ? obj.api_task_id
+        : undefined;
+
+  if (
+    guideLines.length === 0 &&
+    statusCode === undefined &&
+    !statusMessage &&
+    !taskId &&
+    !resultUrl &&
+    !apiTaskId
+  ) {
+    return null;
+  }
+
+  return {
+    statusCode,
+    statusMessage,
+    taskId,
+    lineCount,
+    guideLines,
+    frameSize,
+    resultUrl,
+    apiTaskId
+  };
 };
 
 const pickPosePoint = (
@@ -453,6 +607,17 @@ type AlignmentPersonPayload = {
   mouthStatus: string;
 };
 
+type GuideLinePayload = {
+  type: 'guide_line';
+  streamUrl: string;
+  taskId?: string;
+  timeoutSec?: number;
+  sendIntervalSec?: number;
+  drawOverlay?: boolean;
+  guideLineApiUrl?: string;
+  guideLineAuthorization?: string;
+};
+
 type StreamSourceOption = 'mobile' | 'drone';
 
 const STREAM_SOURCE_OPTIONS: Array<{ value: StreamSourceOption; label: string }> = [
@@ -591,7 +756,6 @@ const parseShotRatioConfig = (value: unknown): ShotRatioConfigItem[] => {
 };
 
 function LivePusher() {
-  type AlgoType = 'upload_template' | 'alignment_person';
   const ALIGNMENT_TEMPLATE_TYPE = 'intent_template';
   const SHOT_RATIO_CONFIG_TYPE = 'basic_config';
   const SHOT_RATIO_CONFIG_KEY = 'shot_subject_ratio_table';
@@ -615,7 +779,7 @@ function LivePusher() {
   const [isConsoleExpanded, setIsConsoleExpanded] = useState(true);
   const [isAnalysisPanelExpanded, setIsAnalysisPanelExpanded] = useState(true);
   const [notifyMessage, setNotifyMessage] = useState('');
-  const [activeMode, setActiveMode] = useState<'image_search' | 'alignment_person' | null>(null);
+  const [activeMode, setActiveMode] = useState<ActiveMode>(null);
   const [spectatorFlvUrl, setSpectatorFlvUrl] = useState('http://localhost:1985/rtc/v1/whep/?app=live&stream=stream.flv');
   const [spectatorIsLive, setSpectatorIsLive] = useState(true);
   const [spectatorWithCredentials, setSpectatorWithCredentials] = useState(false);
@@ -632,6 +796,17 @@ function LivePusher() {
   const [selectedAlignmentTemplateKey, setSelectedAlignmentTemplateKey] = useState('');
   const [alignmentTemplateLoading, setAlignmentTemplateLoading] = useState(false);
   const [alignmentError, setAlignmentError] = useState('');
+  const [guideLineForm, setGuideLineForm] = useState({
+    taskId: '',
+    timeoutSec: '',
+    sendIntervalSec: '',
+    drawOverlay: true,
+    guideLineApiUrl: '',
+    guideLineAuthorization: ''
+  });
+  const [guideLineInfo, setGuideLineInfo] = useState<GuideLineInfo | null>(null);
+  const [guideLineError, setGuideLineError] = useState('');
+  const [isGuideLineAdvancedExpanded, setIsGuideLineAdvancedExpanded] = useState(false);
   const [moveGuide, setMoveGuide] = useState<{
     pitch?: number;
     roll?: number;
@@ -699,6 +874,8 @@ function LivePusher() {
           ? '以图搜景'
           : currentAlgoType === 'alignment_person'
               ? '对准-人'
+              : currentAlgoType === 'guide_line'
+                  ? '引导线'
               : '未识别';
   const captureScrollTop = () => {
       const scrollingElement = document.scrollingElement;
@@ -747,7 +924,10 @@ function LivePusher() {
         (Boolean(currentStage) || hasAlignmentAnalysis)) ||
       (activeMode === 'image_search' &&
         currentAlgoType === 'upload_template' &&
-        Boolean(imageSearchInfo));
+        Boolean(imageSearchInfo)) ||
+      (activeMode === 'guide_line' &&
+        currentAlgoType === 'guide_line' &&
+        Boolean(guideLineInfo));
   const shouldShowCenterAlignmentGuide = isCenterAlignmentStage;
   const shouldShowHeightRangeGuide = isHeightAlignmentStage;
   const shouldShowPersonBoundingBox = isDistanceAlignmentStage;
@@ -888,13 +1068,16 @@ function LivePusher() {
             showNotify(parsed.message);
           }
           const incomingAlgoType: AlgoType | null =
-              parsed?.algoType === 'upload_template' || parsed?.algoType === 'alignment_person'
-                  ? parsed.algoType
-                  : null;
+              normalizeAlgoType(parsed?.algoType) ||
+              normalizeAlgoType(parsed?.raw?.algoType) ||
+              (parsed?.type === 'guide_line_result' || parsed?.raw?.type === 'guide_line_result'
+                  ? 'guide_line'
+                  : null);
           if (incomingAlgoType && incomingAlgoType !== currentAlgoTypeRef.current) {
             // 算法类型切换时，清空上一轮展示
             setRawInfo(null);
             setImageSearchInfo(null);
+            setGuideLineInfo(null);
             setMoveGuide(null);
             setGimbalGuide(null);
             setTaskOffNotice(false);
@@ -1115,6 +1298,15 @@ function LivePusher() {
               if (Object.keys(nextRaw).length > 0) {
                 setRawInfo(nextRaw);
               }
+            }
+          }
+
+          if (effectiveAlgoType === 'guide_line' || parsed?.type === 'guide_line_result') {
+            const nextGuideLineInfo =
+              parseGuideLineResult(parsed.raw) ||
+              parseGuideLineResult(parsed);
+            if (nextGuideLineInfo) {
+              setGuideLineInfo(nextGuideLineInfo);
             }
           }
           return JSON.stringify(parsed);
@@ -1663,6 +1855,61 @@ function LivePusher() {
     fileInputRef.current?.click();
   };
 
+  const handleSubmitGuideLine = async () => {
+    setGuideLineError('');
+    setGuideLineInfo(null);
+    try {
+      const requestBody: GuideLinePayload = {
+        type: 'guide_line',
+        streamUrl: getStreamUrlBySource(controlDevice),
+        drawOverlay: guideLineForm.drawOverlay
+      };
+      const taskId = guideLineForm.taskId.trim();
+      const timeoutSecText = guideLineForm.timeoutSec.trim();
+      const sendIntervalSecText = guideLineForm.sendIntervalSec.trim();
+      const guideLineApiUrl = guideLineForm.guideLineApiUrl.trim();
+      const guideLineAuthorization = guideLineForm.guideLineAuthorization.trim();
+
+      if (taskId) {
+        requestBody.taskId = taskId;
+      }
+      if (timeoutSecText) {
+        const timeoutSec = Number(timeoutSecText);
+        if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) {
+          throw new Error('超时时间必须是大于 0 的数字');
+        }
+        requestBody.timeoutSec = timeoutSec;
+      }
+      if (sendIntervalSecText) {
+        const sendIntervalSec = Number(sendIntervalSecText);
+        if (!Number.isFinite(sendIntervalSec) || sendIntervalSec < 0) {
+          throw new Error('上报间隔必须是大于等于 0 的数字');
+        }
+        requestBody.sendIntervalSec = sendIntervalSec;
+      }
+      if (guideLineApiUrl) {
+        requestBody.guideLineApiUrl = guideLineApiUrl;
+      }
+      if (guideLineAuthorization) {
+        requestBody.guideLineAuthorization = guideLineAuthorization;
+      }
+
+      const response = await fetch(WEB_SERVER, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      if (!response.ok) {
+        throw new Error(`提交失败（HTTP ${response.status}）`);
+      }
+    } catch (err) {
+      console.error('提交引导线失败', err);
+      setGuideLineError((err as Error).message || '提交失败');
+    }
+  };
+
   const saveBlobWithDownload = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -1941,7 +2188,7 @@ function LivePusher() {
     deviceManagerRef.current = deviceManager;
 
     const list = await deviceManager.getDevicesList();
-    const cameras = list
+    const cameras: DeviceInfo[] = list
         .filter((d: any) => d.type === 'video')
         .map((d: any) => ({
           deviceId: d.deviceId,
@@ -2215,6 +2462,44 @@ function LivePusher() {
                                 {imageSearchInfo.statusMessage && <div>说明：{imageSearchInfo.statusMessage}</div>}
                               </div>
                           )}
+                          {currentAlgoType === 'guide_line' && guideLineInfo && (
+                              <div className="rounded bg-black/35 px-2 py-1 space-y-1">
+                                <div className="rounded bg-black/20 px-2 py-1">
+                                  当前算法：
+                                  <span className="ml-1 font-medium text-sky-200">{currentAlgoLabel}</span>
+                                </div>
+                                <div>状态码：{guideLineInfo.statusCode ?? '--'}</div>
+                                <div>识别线数：{guideLineInfo.lineCount ?? guideLineInfo.guideLines.length}</div>
+                                <div>任务 ID：{guideLineInfo.taskId || '--'}</div>
+                                <div>接口任务 ID：{guideLineInfo.apiTaskId || '--'}</div>
+                                {guideLineInfo.frameSize && (
+                                    <div>
+                                      结果画幅：{guideLineInfo.frameSize.width} × {guideLineInfo.frameSize.height}
+                                    </div>
+                                )}
+                                {guideLineInfo.statusMessage && <div>说明：{guideLineInfo.statusMessage}</div>}
+                                {guideLineInfo.resultUrl && (
+                                    <div className="break-all">
+                                      结果图：
+                                      <a
+                                          href={guideLineInfo.resultUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="ml-1 text-sky-200 underline"
+                                      >
+                                        查看结果
+                                      </a>
+                                    </div>
+                                )}
+                                {guideLineInfo.guideLines.length > 0 && (
+                                    <div className="rounded bg-black/20 px-2 py-1 space-y-1">
+                                      <div className="font-medium">画面说明</div>
+                                      <div>绿色线：当前识别到的引导线</div>
+                                      <div>绿色圆点：引导线端点</div>
+                                    </div>
+                                )}
+                              </div>
+                          )}
                         </div>
                     )}
                   </div>
@@ -2241,8 +2526,9 @@ function LivePusher() {
                             const height = boxHeight * scaleY;
                             return (
                                 <div
-                                    className="absolute border-2 border-emerald-400"
+                                    className="absolute border-2"
                                     style={{
+                                      borderColor: ALGO_RESULT_COLOR,
                                       left,
                                       top,
                                       width,
@@ -2265,17 +2551,26 @@ function LivePusher() {
                             return (
                                 <>
                                   <div
-                                      className="absolute left-0 right-0 border-t-2 border-dashed border-red-500/80"
-                                      style={{ top: topLineY }}
+                                      className="absolute left-0 right-0 border-t-2 border-dashed"
+                                      style={{
+                                        top: topLineY,
+                                        borderColor: ALGO_TARGET_COLOR_SOFT
+                                      }}
                                   />
                                   <div
-                                      className="absolute left-0 right-0 border-t-2 border-dashed border-red-500/80"
-                                      style={{ top: bottomLineY }}
+                                      className="absolute left-0 right-0 border-t-2 border-dashed"
+                                      style={{
+                                        top: bottomLineY,
+                                        borderColor: ALGO_TARGET_COLOR_SOFT
+                                      }}
                                   />
                                   {rawInfo.heightReferencePoint ? (
                                       <div
-                                          className="absolute left-0 right-0 border-t-2 border-emerald-400/90"
-                                          style={{ top: rawInfo.heightReferencePoint[1] * scaleY }}
+                                          className="absolute left-0 right-0 border-t-2"
+                                          style={{
+                                            top: rawInfo.heightReferencePoint[1] * scaleY,
+                                            borderColor: ALGO_RESULT_COLOR_SOFT
+                                          }}
                                       />
                                   ) : null}
                                 </>
@@ -2289,8 +2584,9 @@ function LivePusher() {
                             const height = boxHeight * scaleY;
                             return (
                                 <div
-                                    className="absolute border-2 border-red-500/80"
+                                    className="absolute border-2"
                                     style={{
+                                      borderColor: ALGO_TARGET_COLOR_SOFT,
                                       left,
                                       top,
                                       width,
@@ -2307,8 +2603,9 @@ function LivePusher() {
                             const height = boxHeight * scaleY;
                             return (
                                 <div
-                                    className="absolute border-2 border-emerald-400"
+                                    className="absolute border-2"
                                     style={{
+                                      borderColor: ALGO_RESULT_COLOR,
                                       left,
                                       top,
                                       width,
@@ -2323,8 +2620,9 @@ function LivePusher() {
                             const top = cy * scaleY;
                             return (
                                 <div
-                                    className="absolute w-3 h-3 bg-emerald-400 rounded-full -translate-x-1/2 -translate-y-1/2"
+                                    className="absolute h-3 w-3 rounded-full -translate-x-1/2 -translate-y-1/2"
                                     style={{
+                                      backgroundColor: ALGO_RESULT_COLOR,
                                       left,
                                       top
                                     }}
@@ -2337,8 +2635,9 @@ function LivePusher() {
                             const top = cy * scaleY;
                             return (
                                 <div
-                                    className="absolute w-3 h-3 bg-emerald-400 rounded-full -translate-x-1/2 -translate-y-1/2"
+                                    className="absolute h-3 w-3 rounded-full -translate-x-1/2 -translate-y-1/2"
                                     style={{
+                                      backgroundColor: ALGO_RESULT_COLOR,
                                       left,
                                       top
                                     }}
@@ -2358,15 +2657,17 @@ function LivePusher() {
                             return (
                                 <>
                                   <div
-                                      className="absolute w-3 h-3 bg-red-500/70 rounded-full -translate-x-1/2 -translate-y-1/2"
+                                      className="absolute h-3 w-3 rounded-full -translate-x-1/2 -translate-y-1/2"
                                       style={{
+                                        backgroundColor: ALGO_TARGET_COLOR_WEAK,
                                         left: centerX,
                                         top: centerY
                                       }}
                                   />
                                   <div
-                                      className="absolute border-2 border-red-500/60 rounded-full border-dashed"
+                                      className="absolute rounded-full border-2 border-dashed"
                                       style={{
+                                        borderColor: ALGO_TARGET_COLOR_FAINT,
                                         left: centerX - boxSize / 2,
                                         top: centerY - boxSize / 2,
                                         width: boxSize,
@@ -2435,15 +2736,89 @@ function LivePusher() {
                           <polygon
                               points={`${p1[0]},${p1[1]} ${p2[0]},${p2[1]} ${p3[0]},${p3[1]} ${p4[0]},${p4[1]}`}
                               fill="none"
-                              stroke="#34d399"
+                              stroke={ALGO_RESULT_COLOR}
                               strokeWidth="2"
                           />
-                          <line x1={p1[0]} y1={p1[1]} x2={p3[0]} y2={p3[1]} stroke="#34d399" strokeWidth="1.5" strokeDasharray="6 4" />
-                          <line x1={p2[0]} y1={p2[1]} x2={p4[0]} y2={p4[1]} stroke="#34d399" strokeWidth="1.5" strokeDasharray="6 4" />
-                          {focus && <circle cx={focus[0]} cy={focus[1]} r="5" fill="#34d399" />}
+                          <line x1={p1[0]} y1={p1[1]} x2={p3[0]} y2={p3[1]} stroke={ALGO_RESULT_COLOR} strokeWidth="1.5" strokeDasharray="6 4" />
+                          <line x1={p2[0]} y1={p2[1]} x2={p4[0]} y2={p4[1]} stroke={ALGO_RESULT_COLOR} strokeWidth="1.5" strokeDasharray="6 4" />
+                          {focus && <circle cx={focus[0]} cy={focus[1]} r="5" fill={ALGO_RESULT_COLOR} />}
                         </svg>
                     );
                   })()}
+                </div>
+            )}
+
+            {(currentAlgoType === 'guide_line') &&
+                guideLineInfo &&
+                containerSize &&
+                guideLineInfo.guideLines.length > 0 && (
+                <div className="absolute inset-0 pointer-events-none">
+                  <svg
+                      className="absolute inset-0 h-full w-full"
+                      viewBox={`0 0 ${containerSize.width} ${containerSize.height}`}
+                  >
+                    {guideLineInfo.guideLines.map((guideLine, index) => {
+                      const clamp = (value: number, min: number, max: number) =>
+                          Math.max(min, Math.min(max, value));
+                      const mapPoint = (
+                        point?: [number, number],
+                        normalizedPoint?: [number, number]
+                      ): [number, number] | null => {
+                        if (normalizedPoint) {
+                          return [
+                            clamp(normalizedPoint[0] * containerSize.width, 0, containerSize.width),
+                            clamp(normalizedPoint[1] * containerSize.height, 0, containerSize.height)
+                          ];
+                        }
+
+                        const widthBase = guideLineInfo.frameSize?.width || sourceSize?.width;
+                        const heightBase = guideLineInfo.frameSize?.height || sourceSize?.height;
+                        if (!point || !widthBase || !heightBase) return null;
+                        return [
+                          clamp((point[0] / widthBase) * containerSize.width, 0, containerSize.width),
+                          clamp((point[1] / heightBase) * containerSize.height, 0, containerSize.height)
+                        ];
+                      };
+
+                      const start = mapPoint(
+                        guideLine.points?.[0],
+                        guideLine.pointsNorm?.[0]
+                      );
+                      const end = mapPoint(
+                        guideLine.points?.[1],
+                        guideLine.pointsNorm?.[1]
+                      );
+                      if (!start || !end) return null;
+
+                      return (
+                          <g key={`${guideLine.id}-${index}`}>
+                            <line
+                                x1={start[0]}
+                                y1={start[1]}
+                                x2={end[0]}
+                                y2={end[1]}
+                                stroke={ALGO_RESULT_COLOR}
+                                strokeWidth="3"
+                                strokeLinecap="round"
+                            />
+                            <circle cx={start[0]} cy={start[1]} r="4" fill={ALGO_RESULT_COLOR} />
+                            <circle cx={end[0]} cy={end[1]} r="4" fill={ALGO_RESULT_COLOR} />
+                            <text
+                                x={start[0] + 8}
+                                y={start[1] - 8}
+                                fontSize="12"
+                                fontWeight="600"
+                                fill={ALGO_RESULT_LABEL_COLOR}
+                                paintOrder="stroke"
+                                stroke="rgba(15,23,42,0.92)"
+                                strokeWidth="1.2"
+                            >
+                              L{guideLine.id}
+                            </text>
+                          </g>
+                      );
+                    })}
+                  </svg>
                 </div>
             )}
             {!isStreaming && (
@@ -2621,6 +2996,16 @@ function LivePusher() {
                   >
                     对准-人
                   </button>
+                  <button
+                      onClick={() => setActiveMode('guide_line')}
+                      className={`px-4 py-2 rounded-xl ${
+                          activeMode === 'guide_line'
+                              ? 'bg-blue-500'
+                              : 'bg-slate-700'
+                      }`}
+                  >
+                    引导线
+                  </button>
                 </div>
               </>
             )}
@@ -2691,6 +3076,114 @@ function LivePusher() {
 
                   {alignmentError && (
                       <div className="text-red-400 text-sm">{alignmentError}</div>
+                  )}
+                </div>
+            )}
+
+            {isStreaming && activeMode === 'guide_line' && (
+                <div className="mt-4 space-y-3">
+                  <div className="rounded-xl bg-slate-900/80 p-3 text-sm text-slate-300">
+                    按当前直播流发起引导线识别。高级参数留空时，将使用服务默认值。
+                  </div>
+
+                  <button
+                      type="button"
+                      onClick={() => setIsGuideLineAdvancedExpanded(prev => !prev)}
+                      className="flex w-full items-center justify-between rounded-xl bg-slate-700 px-3 py-2 text-left"
+                  >
+                    <span>高级参数（可选）</span>
+                    {isGuideLineAdvancedExpanded ? (
+                        <ChevronUp className="h-4 w-4 shrink-0" />
+                    ) : (
+                        <ChevronDown className="h-4 w-4 shrink-0" />
+                    )}
+                  </button>
+
+                  {isGuideLineAdvancedExpanded && (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <label className="text-slate-300 text-sm">任务 ID</label>
+                          <input
+                              value={guideLineForm.taskId}
+                              onChange={e =>
+                                  setGuideLineForm(prev => ({ ...prev, taskId: e.target.value }))
+                              }
+                              placeholder="可选，默认 123"
+                              className="mt-2 w-full rounded bg-slate-900 p-2 text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-slate-300 text-sm">超时秒数</label>
+                          <input
+                              value={guideLineForm.timeoutSec}
+                              onChange={e =>
+                                  setGuideLineForm(prev => ({ ...prev, timeoutSec: e.target.value }))
+                              }
+                              inputMode="decimal"
+                              placeholder="可选，默认 20"
+                              className="mt-2 w-full rounded bg-slate-900 p-2 text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-slate-300 text-sm">上报间隔秒数</label>
+                          <input
+                              value={guideLineForm.sendIntervalSec}
+                              onChange={e =>
+                                  setGuideLineForm(prev => ({ ...prev, sendIntervalSec: e.target.value }))
+                              }
+                              inputMode="decimal"
+                              placeholder="可选，默认 0"
+                              className="mt-2 w-full rounded bg-slate-900 p-2 text-white"
+                          />
+                        </div>
+                        <label className="flex items-center gap-3 rounded bg-slate-900 px-3 py-2 text-sm text-white">
+                          <input
+                              type="checkbox"
+                              checked={guideLineForm.drawOverlay}
+                              onChange={e =>
+                                  setGuideLineForm(prev => ({ ...prev, drawOverlay: e.target.checked }))
+                              }
+                              className="h-4 w-4 rounded border-slate-500 bg-slate-800"
+                          />
+                          本地调试画面绘制引导线
+                        </label>
+                        <div className="sm:col-span-2">
+                          <label className="text-slate-300 text-sm">引导线接口地址</label>
+                          <input
+                              value={guideLineForm.guideLineApiUrl}
+                              onChange={e =>
+                                  setGuideLineForm(prev => ({ ...prev, guideLineApiUrl: e.target.value }))
+                              }
+                              placeholder="可选，覆盖默认 guideLineApiUrl"
+                              className="mt-2 w-full rounded bg-slate-900 p-2 text-white"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="text-slate-300 text-sm">鉴权 Token</label>
+                          <input
+                              value={guideLineForm.guideLineAuthorization}
+                              onChange={e =>
+                                  setGuideLineForm(prev => ({
+                                    ...prev,
+                                    guideLineAuthorization: e.target.value
+                                  }))
+                              }
+                              placeholder="可选，覆盖默认 Authorization"
+                              className="mt-2 w-full rounded bg-slate-900 p-2 text-white"
+                          />
+                        </div>
+                      </div>
+                  )}
+
+                  <button
+                      onClick={handleSubmitGuideLine}
+                      className="w-full rounded-xl bg-emerald-500 py-2 text-white"
+                  >
+                    提交
+                  </button>
+
+                  {guideLineError && (
+                      <div className="text-sm text-red-400">{guideLineError}</div>
                   )}
                 </div>
             )}
