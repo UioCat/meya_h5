@@ -347,6 +347,9 @@ function TemplateManager({
     }
   };
 
+  const hasDuplicateKey = (nextKey: string, currentKey?: string) =>
+    items.some(item => item.key === nextKey && item.key !== currentKey);
+
   const deleteTemplate = async (key: string) => {
     if (!window.confirm(`确认删除模版 "${key}" 吗？`)) return;
     setSaving(true);
@@ -368,6 +371,15 @@ function TemplateManager({
   };
 
   const updateTemplate = async (key: string) => {
+    const nextKey = draftKey.trim();
+    if (!nextKey) {
+      setError('请先输入模版名称（key）');
+      return;
+    }
+    if (hasDuplicateKey(nextKey, key)) {
+      setError('已存在同名模版，请修改后再保存');
+      return;
+    }
     const parsed = validateDraft(draftForm);
     if (!parsed.value) {
       setError(parsed.error);
@@ -376,11 +388,23 @@ function TemplateManager({
     setSaving(true);
     setError('');
     try {
-      await postJson('/kv/update', {
-        type: TEMPLATE_TYPE,
-        key,
-        value: parsed.value
-      });
+      if (nextKey === key) {
+        await postJson('/kv/update', {
+          type: TEMPLATE_TYPE,
+          key,
+          value: parsed.value
+        });
+      } else {
+        await postJson('/kv/create', {
+          type: TEMPLATE_TYPE,
+          key: nextKey,
+          value: parsed.value
+        });
+        await postJson('/kv/delete', {
+          type: TEMPLATE_TYPE,
+          key
+        });
+      }
       await loadTemplates();
       backToList();
     } catch (err: any) {
@@ -445,7 +469,7 @@ function TemplateManager({
     detailMode === 'create'
       ? '填写模版名称和参数后保存'
       : detailMode === 'edit'
-        ? '更新当前模版参数'
+        ? '支持更新当前模版名称和参数'
         : '查看当前模版详情';
   const actionButtonClass =
     'inline-flex h-10 w-10 items-center justify-center rounded-xl border text-slate-200 transition disabled:cursor-not-allowed disabled:opacity-50';
@@ -598,13 +622,13 @@ function TemplateManager({
                     type="text"
                     value={draftKey}
                     onChange={event => setDraftKey(event.target.value)}
-                    readOnly={!isCreateMode}
+                    readOnly={isViewMode}
                     className={`mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white outline-none ${
-                      isCreateMode ? 'focus:border-emerald-400' : 'cursor-not-allowed opacity-80'
+                      isViewMode ? 'cursor-not-allowed opacity-80' : 'focus:border-emerald-400'
                     }`}
                     placeholder="例如：portrait_intent_default"
                   />
-                  {!isCreateMode && selectedItem && (
+                  {selectedItem && (
                     <div className="mt-2 text-xs text-slate-400">更新时间：{formatTime(selectedItem.updated_at)}</div>
                   )}
                 </div>
