@@ -58,7 +58,7 @@
 | `orientation` | `string` | 是 | 由模版中的 `orientation` 解析得到，例如 `C1正脸 -> 正脸` |
 | `compositionMethod` | `string` | 是 | 由模版中的 `compositionMethod` 解析得到，例如 `D1居中构图 -> 居中构图` |
 | `compositionObject` | `string` | 是 | 模版中的构图对象，当前直接下发，例如 `双眼中心点` |
-| `cameraHeight` | `string` | 是 | 由模版中的 `cameraHeight` 解析得到，例如 `E4齐眼 -> 齐眼` |
+| `cameraHeight` | `string` | 是 | 由模版中的 `cameraHeight` 解析得到，例如 `E5齐眼 -> 齐眼` |
 | `eyeStatus` | `string` | 是 | 模版中的眼睛状态，当前直接下发，例如 `睁眼` |
 | `mouthStatus` | `string` | 是 | 模版中的嘴巴状态，当前直接下发，例如 `微笑` |
 
@@ -108,7 +108,7 @@
 - `cameraHeight`
   由模版中的 `cameraHeight` 去掉编码前缀后得到。
   当前枚举值：
-  `齐眼`、`齐肩`、`齐髋`、`齐膝`
+  `齐眼`、`齐胸`、`齐肩`、`齐髋`、`齐膝`
 - `eyeStatus`
   直接使用模版中的枚举值。
   当前枚举值：
@@ -131,7 +131,7 @@
   "orientation": "C1正脸",
   "compositionMethod": "D1居中构图",
   "compositionObject": "双眼中心点",
-  "cameraHeight": "E4齐眼",
+  "cameraHeight": "E5齐眼",
   "eyeStatus": "睁眼",
   "mouthStatus": "微笑"
 }
@@ -141,7 +141,7 @@
 
 - `bodyRange` / `shotType` / `orientation` / `compositionMethod` / `cameraHeight`
   都是完整编码值，且中间不带空格
-- 例如：`A1头部`、`B1特写`、`C1正脸`、`D1居中构图`、`E4齐眼`
+- 例如：`A1头部`、`B1特写`、`C1正脸`、`D1居中构图`、`E5齐眼`
 
 ### 5.2 直接解析规则
 
@@ -151,7 +151,7 @@
 - `B1特写 -> 特写`
 - `C1正脸 -> 正脸`
 - `D1居中构图 -> 居中构图`
-- `E4齐眼 -> 齐眼`
+- `E5齐眼 -> 齐眼`
 
 对应到请求体中的：
 
@@ -468,7 +468,7 @@
     "orientation": "C1正脸",
     "compositionMethod": "D1居中构图",
     "compositionObject": "双眼中心点",
-    "cameraHeight": "E4齐眼",
+    "cameraHeight": "E5齐眼",
     "eyeStatus": "睁眼",
     "mouthStatus": "微笑"
   }

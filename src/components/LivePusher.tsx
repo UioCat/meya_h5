@@ -100,6 +100,7 @@ const HEIGHT_STAGE_RANGE_HALF_RATIO = 0.035;
 
 // Semantic overlay colors: detected content stays green, target regions stay red.
 const ALGO_RESULT_COLOR = '#34D399';
+const ALGO_RESULT_SECONDARY_LINE_COLOR = '#3B82F6';
 const ALGO_RESULT_COLOR_SOFT = 'rgba(52, 211, 153, 0.9)';
 const ALGO_TARGET_COLOR = '#EF4444';
 const ALGO_TARGET_COLOR_SOFT = 'rgba(239, 68, 68, 0.8)';
@@ -143,10 +144,12 @@ type GuideLineInfo = {
   statusMessage?: string;
   taskId?: string;
   lineCount?: number;
+  selectedGuideLineId?: number | string;
   guideLines: Array<{
     id: number | string;
     points?: [[number, number], [number, number]];
     pointsNorm?: [[number, number], [number, number]];
+    isAlignmentLine?: boolean;
   }>;
   frameSize?: {
     width: number;
@@ -173,7 +176,23 @@ const parseGuideLineResult = (value: unknown): GuideLineInfo | null => {
     ? obj.guideLines
     : Array.isArray(obj.guide_lines)
       ? obj.guide_lines
+      : Array.isArray(obj.detectedGuideLines)
+        ? obj.detectedGuideLines
+        : Array.isArray(obj.detected_guide_lines)
+          ? obj.detected_guide_lines
+          : Array.isArray(obj.reportedGuideLines)
+            ? obj.reportedGuideLines
+            : Array.isArray(obj.reported_guide_lines)
+              ? obj.reported_guide_lines
       : [];
+
+  const selectedGuideLineSource =
+    obj.selectedGuideLine && typeof obj.selectedGuideLine === 'object'
+      ? (obj.selectedGuideLine as Record<string, unknown>)
+      : obj.selected_guide_line && typeof obj.selected_guide_line === 'object'
+        ? (obj.selected_guide_line as Record<string, unknown>)
+        : null;
+  const selectedGuideLineId = selectedGuideLineSource?.id;
 
   const guideLines: GuideLineInfo['guideLines'] = [];
   linesSource.forEach((line, index) => {
@@ -189,7 +208,10 @@ const parseGuideLineResult = (value: unknown): GuideLineInfo | null => {
           ? rawId
           : index,
       points,
-      pointsNorm
+      pointsNorm,
+      isAlignmentLine:
+        lineObj.isAlignmentLine === true ||
+        lineObj.is_alignment_line === true
     });
   });
 
@@ -262,6 +284,10 @@ const parseGuideLineResult = (value: unknown): GuideLineInfo | null => {
     statusMessage,
     taskId,
     lineCount,
+    selectedGuideLineId:
+      typeof selectedGuideLineId === 'number' || typeof selectedGuideLineId === 'string'
+        ? selectedGuideLineId
+        : undefined,
     guideLines,
     frameSize,
     resultUrl,
@@ -294,6 +320,9 @@ const getHeightReferencePoint = (
 
   if (normalized === '齐眼') {
     return pickPosePoint(pose, ['eye_center', 'eyes_center', 'eye_point', 'eyePoint']);
+  }
+  if (normalized === '齐胸') {
+    return pickPosePoint(pose, ['chest_center', 'chest_point', 'chestPoint']);
   }
   if (normalized === '齐肩') {
     return pickPosePoint(pose, ['shoulder_center', 'shoulders_center', 'shoulder_point', 'shoulderPoint']);
@@ -610,12 +639,8 @@ type AlignmentPersonPayload = {
 type GuideLinePayload = {
   type: 'guide_line';
   streamUrl: string;
-  taskId?: string;
-  timeoutSec?: number;
-  sendIntervalSec?: number;
-  drawOverlay?: boolean;
-  guideLineApiUrl?: string;
-  guideLineAuthorization?: string;
+  proEnabled?: boolean;
+  showOtherLines?: boolean;
 };
 
 type StreamSourceOption = 'mobile' | 'drone';
@@ -797,16 +822,15 @@ function LivePusher() {
   const [alignmentTemplateLoading, setAlignmentTemplateLoading] = useState(false);
   const [alignmentError, setAlignmentError] = useState('');
   const [guideLineForm, setGuideLineForm] = useState({
-    taskId: '',
-    timeoutSec: '',
-    sendIntervalSec: '',
-    drawOverlay: true,
-    guideLineApiUrl: '',
-    guideLineAuthorization: ''
+    proEnabled: true,
+    showOtherLines: true
+  });
+  const [latestGuideLineOptions, setLatestGuideLineOptions] = useState({
+    proEnabled: true,
+    showOtherLines: true
   });
   const [guideLineInfo, setGuideLineInfo] = useState<GuideLineInfo | null>(null);
   const [guideLineError, setGuideLineError] = useState('');
-  const [isGuideLineAdvancedExpanded, setIsGuideLineAdvancedExpanded] = useState(false);
   const [moveGuide, setMoveGuide] = useState<{
     pitch?: number;
     roll?: number;
@@ -937,6 +961,11 @@ function LivePusher() {
       (Boolean(rawInfo?.targetBox) ||
         Boolean(rawInfo?.compositionObjectBox) ||
         Boolean(rawInfo?.compositionObjectCenterPoint));
+  const visibleGuideLines = guideLineInfo?.guideLines.filter(line =>
+      !latestGuideLineOptions.proEnabled ||
+      latestGuideLineOptions.showOtherLines ||
+      line.isAlignmentLine
+  ) || [];
   const isDroneControl = controlDevice === 'drone';
   const movementSuggestions: Array<{ key: string; label: string; icon: JSX.Element }> = [];
   if (moveGuide?.pitch !== undefined && moveGuide.pitch !== 0) {
@@ -1862,36 +1891,10 @@ function LivePusher() {
       const requestBody: GuideLinePayload = {
         type: 'guide_line',
         streamUrl: getStreamUrlBySource(controlDevice),
-        drawOverlay: guideLineForm.drawOverlay
+        proEnabled: guideLineForm.proEnabled
       };
-      const taskId = guideLineForm.taskId.trim();
-      const timeoutSecText = guideLineForm.timeoutSec.trim();
-      const sendIntervalSecText = guideLineForm.sendIntervalSec.trim();
-      const guideLineApiUrl = guideLineForm.guideLineApiUrl.trim();
-      const guideLineAuthorization = guideLineForm.guideLineAuthorization.trim();
-
-      if (taskId) {
-        requestBody.taskId = taskId;
-      }
-      if (timeoutSecText) {
-        const timeoutSec = Number(timeoutSecText);
-        if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) {
-          throw new Error('超时时间必须是大于 0 的数字');
-        }
-        requestBody.timeoutSec = timeoutSec;
-      }
-      if (sendIntervalSecText) {
-        const sendIntervalSec = Number(sendIntervalSecText);
-        if (!Number.isFinite(sendIntervalSec) || sendIntervalSec < 0) {
-          throw new Error('上报间隔必须是大于等于 0 的数字');
-        }
-        requestBody.sendIntervalSec = sendIntervalSec;
-      }
-      if (guideLineApiUrl) {
-        requestBody.guideLineApiUrl = guideLineApiUrl;
-      }
-      if (guideLineAuthorization) {
-        requestBody.guideLineAuthorization = guideLineAuthorization;
+      if (guideLineForm.proEnabled) {
+        requestBody.showOtherLines = guideLineForm.showOtherLines;
       }
 
       const response = await fetch(WEB_SERVER, {
@@ -1904,6 +1907,10 @@ function LivePusher() {
       if (!response.ok) {
         throw new Error(`提交失败（HTTP ${response.status}）`);
       }
+      setLatestGuideLineOptions({
+        proEnabled: guideLineForm.proEnabled,
+        showOtherLines: guideLineForm.proEnabled ? guideLineForm.showOtherLines : true
+      });
     } catch (err) {
       console.error('提交引导线失败', err);
       setGuideLineError((err as Error).message || '提交失败');
@@ -2470,6 +2477,9 @@ function LivePusher() {
                                 </div>
                                 <div>状态码：{guideLineInfo.statusCode ?? '--'}</div>
                                 <div>识别线数：{guideLineInfo.lineCount ?? guideLineInfo.guideLines.length}</div>
+                                {latestGuideLineOptions.proEnabled && !latestGuideLineOptions.showOtherLines && (
+                                    <div>当前展示线数：{visibleGuideLines.length}</div>
+                                )}
                                 <div>任务 ID：{guideLineInfo.taskId || '--'}</div>
                                 <div>接口任务 ID：{guideLineInfo.apiTaskId || '--'}</div>
                                 {guideLineInfo.frameSize && (
@@ -2491,11 +2501,13 @@ function LivePusher() {
                                       </a>
                                     </div>
                                 )}
-                                {guideLineInfo.guideLines.length > 0 && (
+                                {visibleGuideLines.length > 0 && (
                                     <div className="rounded bg-black/20 px-2 py-1 space-y-1">
                                       <div className="font-medium">画面说明</div>
-                                      <div>绿色线：当前识别到的引导线</div>
-                                      <div>绿色圆点：引导线端点</div>
+                                      <div>绿色线 / 绿色圆点：对准线</div>
+                                      {latestGuideLineOptions.proEnabled && latestGuideLineOptions.showOtherLines && (
+                                          <div>蓝色线 / 蓝色圆点：其他引导线</div>
+                                      )}
                                     </div>
                                 )}
                               </div>
@@ -2751,13 +2763,13 @@ function LivePusher() {
             {(currentAlgoType === 'guide_line') &&
                 guideLineInfo &&
                 containerSize &&
-                guideLineInfo.guideLines.length > 0 && (
+                visibleGuideLines.length > 0 && (
                 <div className="absolute inset-0 pointer-events-none">
                   <svg
                       className="absolute inset-0 h-full w-full"
                       viewBox={`0 0 ${containerSize.width} ${containerSize.height}`}
                   >
-                    {guideLineInfo.guideLines.map((guideLine, index) => {
+                    {visibleGuideLines.map((guideLine, index) => {
                       const clamp = (value: number, min: number, max: number) =>
                           Math.max(min, Math.min(max, value));
                       const mapPoint = (
@@ -2789,6 +2801,11 @@ function LivePusher() {
                         guideLine.pointsNorm?.[1]
                       );
                       if (!start || !end) return null;
+                      const guideLineColor =
+                        guideLine.isAlignmentLine === true ||
+                        guideLine.id === guideLineInfo.selectedGuideLineId
+                          ? ALGO_RESULT_COLOR
+                          : ALGO_RESULT_SECONDARY_LINE_COLOR;
 
                       return (
                           <g key={`${guideLine.id}-${index}`}>
@@ -2797,12 +2814,12 @@ function LivePusher() {
                                 y1={start[1]}
                                 x2={end[0]}
                                 y2={end[1]}
-                                stroke={ALGO_RESULT_COLOR}
+                                stroke={guideLineColor}
                                 strokeWidth="3"
                                 strokeLinecap="round"
                             />
-                            <circle cx={start[0]} cy={start[1]} r="4" fill={ALGO_RESULT_COLOR} />
-                            <circle cx={end[0]} cy={end[1]} r="4" fill={ALGO_RESULT_COLOR} />
+                            <circle cx={start[0]} cy={start[1]} r="4" fill={guideLineColor} />
+                            <circle cx={end[0]} cy={end[1]} r="4" fill={guideLineColor} />
                             <text
                                 x={start[0] + 8}
                                 y={start[1] - 8}
@@ -3083,97 +3100,46 @@ function LivePusher() {
             {isStreaming && activeMode === 'guide_line' && (
                 <div className="mt-4 space-y-3">
                   <div className="rounded-xl bg-slate-900/80 p-3 text-sm text-slate-300">
-                    按当前直播流发起引导线识别。高级参数留空时，将使用服务默认值。
+                    按当前直播流发起引导线识别。可以切换是否使用引导线 Pro，以及在 Pro 模式下是否展示其他线条。
                   </div>
 
-                  <button
-                      type="button"
-                      onClick={() => setIsGuideLineAdvancedExpanded(prev => !prev)}
-                      className="flex w-full items-center justify-between rounded-xl bg-slate-700 px-3 py-2 text-left"
-                  >
-                    <span>高级参数（可选）</span>
-                    {isGuideLineAdvancedExpanded ? (
-                        <ChevronUp className="h-4 w-4 shrink-0" />
-                    ) : (
-                        <ChevronDown className="h-4 w-4 shrink-0" />
-                    )}
-                  </button>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="flex items-center gap-3 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                      <input
+                          type="checkbox"
+                          checked={guideLineForm.proEnabled}
+                          onChange={e =>
+                              setGuideLineForm(prev => ({
+                                ...prev,
+                                proEnabled: e.target.checked
+                              }))
+                          }
+                          className="h-4 w-4 rounded border-slate-500 bg-slate-800"
+                      />
+                      是否使用引导线 Pro
+                    </label>
 
-                  {isGuideLineAdvancedExpanded && (
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div>
-                          <label className="text-slate-300 text-sm">任务 ID</label>
-                          <input
-                              value={guideLineForm.taskId}
-                              onChange={e =>
-                                  setGuideLineForm(prev => ({ ...prev, taskId: e.target.value }))
-                              }
-                              placeholder="可选，默认 123"
-                              className="mt-2 w-full rounded bg-slate-900 p-2 text-white"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-slate-300 text-sm">超时秒数</label>
-                          <input
-                              value={guideLineForm.timeoutSec}
-                              onChange={e =>
-                                  setGuideLineForm(prev => ({ ...prev, timeoutSec: e.target.value }))
-                              }
-                              inputMode="decimal"
-                              placeholder="可选，默认 20"
-                              className="mt-2 w-full rounded bg-slate-900 p-2 text-white"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-slate-300 text-sm">上报间隔秒数</label>
-                          <input
-                              value={guideLineForm.sendIntervalSec}
-                              onChange={e =>
-                                  setGuideLineForm(prev => ({ ...prev, sendIntervalSec: e.target.value }))
-                              }
-                              inputMode="decimal"
-                              placeholder="可选，默认 0"
-                              className="mt-2 w-full rounded bg-slate-900 p-2 text-white"
-                          />
-                        </div>
-                        <label className="flex items-center gap-3 rounded bg-slate-900 px-3 py-2 text-sm text-white">
+                    {guideLineForm.proEnabled ? (
+                        <label className="flex items-center gap-3 rounded bg-slate-900 px-3 py-3 text-sm text-white">
                           <input
                               type="checkbox"
-                              checked={guideLineForm.drawOverlay}
-                              onChange={e =>
-                                  setGuideLineForm(prev => ({ ...prev, drawOverlay: e.target.checked }))
-                              }
-                              className="h-4 w-4 rounded border-slate-500 bg-slate-800"
-                          />
-                          本地调试画面绘制引导线
-                        </label>
-                        <div className="sm:col-span-2">
-                          <label className="text-slate-300 text-sm">引导线接口地址</label>
-                          <input
-                              value={guideLineForm.guideLineApiUrl}
-                              onChange={e =>
-                                  setGuideLineForm(prev => ({ ...prev, guideLineApiUrl: e.target.value }))
-                              }
-                              placeholder="可选，覆盖默认 guideLineApiUrl"
-                              className="mt-2 w-full rounded bg-slate-900 p-2 text-white"
-                          />
-                        </div>
-                        <div className="sm:col-span-2">
-                          <label className="text-slate-300 text-sm">鉴权 Token</label>
-                          <input
-                              value={guideLineForm.guideLineAuthorization}
+                              checked={guideLineForm.showOtherLines}
                               onChange={e =>
                                   setGuideLineForm(prev => ({
                                     ...prev,
-                                    guideLineAuthorization: e.target.value
+                                    showOtherLines: e.target.checked
                                   }))
                               }
-                              placeholder="可选，覆盖默认 Authorization"
-                              className="mt-2 w-full rounded bg-slate-900 p-2 text-white"
+                              className="h-4 w-4 rounded border-slate-500 bg-slate-800"
                           />
+                          选择是否展示其他线条
+                        </label>
+                    ) : (
+                        <div className="rounded bg-slate-900 px-3 py-3 text-sm text-slate-400">
+                          关闭 Pro 后，仅提交基础引导线模式参数。
                         </div>
-                      </div>
-                  )}
+                    )}
+                  </div>
 
                   <button
                       onClick={handleSubmitGuideLine}

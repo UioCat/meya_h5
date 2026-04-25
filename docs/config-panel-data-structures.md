@@ -334,7 +334,7 @@
   "orientation": "C1正脸",
   "compositionMethod": "D1居中构图",
   "compositionObject": "双眼中心点",
-  "cameraHeight": "E4齐眼",
+  "cameraHeight": "E5齐眼",
   "eyeStatus": "睁眼",
   "mouthStatus": "微笑"
 }
@@ -342,7 +342,7 @@
 
 取值规则：
 - `bodyRange`、`shotType`、`orientation`、`compositionMethod`、`cameraHeight` 使用完整编码值
-- 例如：`A1头部`、`B1特写`、`C1正脸`、`D1居中构图`、`E4齐眼`
+- 例如：`A1头部`、`B1特写`、`C1正脸`、`D1居中构图`、`E5齐眼`
 - 所有编码值中间不带空格
 
 每次保存到后端的模版 JSON：
@@ -356,7 +356,7 @@
     "orientation": "C1正脸",
     "compositionMethod": "D1居中构图",
     "compositionObject": "双眼中心点",
-    "cameraHeight": "E4齐眼",
+    "cameraHeight": "E5齐眼",
     "eyeStatus": "睁眼",
     "mouthStatus": "微笑"
   }

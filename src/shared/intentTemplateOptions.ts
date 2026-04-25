@@ -176,7 +176,7 @@ export const compositionParams = [
   {
     key: 'E',
     label: '机位高度（E）',
-    options: sortOptionValuesByCode(['E4齐眼', 'E3齐肩', 'E2齐髋', 'E1齐膝'])
+    options: sortOptionValuesByCode(['E5齐眼', 'E4齐胸', 'E3齐肩', 'E2齐髋', 'E1齐膝'])
   },
   {
     key: 'K',
