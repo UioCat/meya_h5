@@ -145,6 +145,15 @@ type GuideLineInfo = {
   taskId?: string;
   lineCount?: number;
   selectedGuideLineId?: number | string;
+  targetAngleDeg?: number;
+  currentAngleDeg?: number;
+  trackerRegion?: {
+    available?: boolean;
+    source?: string;
+    shape?: string;
+    bbox?: [number, number, number, number];
+    bboxNorm?: [number, number, number, number];
+  };
   guideLines: Array<{
     id: number | string;
     points?: [[number, number], [number, number]];
@@ -167,6 +176,43 @@ const parseGuideLineSegmentPoints = (
   const end = parseOverlayPoint(value[1]);
   if (!start || !end) return undefined;
   return [start, end];
+};
+
+const parseGuideLineTrackerRegion = (value: unknown): GuideLineInfo['trackerRegion'] => {
+  if (!value || typeof value !== 'object') return undefined;
+  const obj = value as Record<string, unknown>;
+  const bbox = parseOverlayBox(obj.bbox);
+  const bboxNorm = parseOverlayBox(obj.bboxNorm ?? obj.bbox_norm);
+  if (!bbox && !bboxNorm) return undefined;
+
+  return {
+    available: typeof obj.available === 'boolean' ? obj.available : undefined,
+    source: typeof obj.source === 'string' ? obj.source : undefined,
+    shape: typeof obj.shape === 'string' ? obj.shape : undefined,
+    bbox: bbox || undefined,
+    bboxNorm: bboxNorm || undefined
+  };
+};
+
+const readNumberField = (obj: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+};
+
+const getGuideLineSegmentAngleDeg = (line?: GuideLineInfo['guideLines'][number]) => {
+  const points = line?.pointsNorm || line?.points;
+  if (!points) return undefined;
+  const [[startX, startY], [endX, endY]] = points;
+  const angle = Math.atan2(endY - startY, endX - startX) * (180 / Math.PI);
+  const normalized = ((angle % 180) + 180) % 180;
+  return Number(normalized.toFixed(1));
 };
 
 const parseGuideLineResult = (value: unknown): GuideLineInfo | null => {
@@ -267,14 +313,34 @@ const parseGuideLineResult = (value: unknown): GuideLineInfo | null => {
       : typeof obj.api_task_id === 'string'
         ? obj.api_task_id
         : undefined;
+  const trackerRegion = parseGuideLineTrackerRegion(obj.trackerRegion ?? obj.tracker_region);
+  const targetAngleDeg = readNumberField(obj, [
+    'targetAngleDeg',
+    'target_angle_deg',
+    'alignmentTargetAngleDeg',
+    'alignment_target_angle_deg',
+    'guideLineAlignmentTargetAngleDeg',
+    'guide_line_alignment_target_angle_deg'
+  ]);
+  const currentAngleDeg = readNumberField(obj, [
+    'currentAngleDeg',
+    'current_angle_deg',
+    'alignmentCurrentAngleDeg',
+    'alignment_current_angle_deg',
+    'guideLineAlignmentCurrentAngleDeg',
+    'guide_line_alignment_current_angle_deg'
+  ]);
 
   if (
     guideLines.length === 0 &&
+    !trackerRegion &&
     statusCode === undefined &&
     !statusMessage &&
     !taskId &&
     !resultUrl &&
-    !apiTaskId
+    !apiTaskId &&
+    targetAngleDeg === undefined &&
+    currentAngleDeg === undefined
   ) {
     return null;
   }
@@ -288,6 +354,9 @@ const parseGuideLineResult = (value: unknown): GuideLineInfo | null => {
       typeof selectedGuideLineId === 'number' || typeof selectedGuideLineId === 'string'
         ? selectedGuideLineId
         : undefined,
+    targetAngleDeg,
+    currentAngleDeg,
+    trackerRegion,
     guideLines,
     frameSize,
     resultUrl,
@@ -636,11 +705,17 @@ type AlignmentPersonPayload = {
   mouthStatus: string;
 };
 
+type GuideLineAlignmentOrientation = 'horizontal' | 'vertical';
+
 type GuideLinePayload = {
   type: 'guide_line';
   streamUrl: string;
   proEnabled?: boolean;
   showOtherLines?: boolean;
+  alignmentOrientation?: GuideLineAlignmentOrientation;
+  alignmentPosition?: number;
+  alignmentPositionToleranceRatio?: number;
+  alignmentAngleToleranceDeg?: number;
 };
 
 type StreamSourceOption = 'mobile' | 'drone';
@@ -823,11 +898,19 @@ function LivePusher() {
   const [alignmentError, setAlignmentError] = useState('');
   const [guideLineForm, setGuideLineForm] = useState({
     proEnabled: true,
-    showOtherLines: true
+    showOtherLines: true,
+    alignmentOrientation: 'horizontal' as GuideLineAlignmentOrientation,
+    alignmentPosition: '0.5',
+    alignmentPositionTolerancePercent: '5',
+    alignmentAngleToleranceDeg: '5'
   });
   const [latestGuideLineOptions, setLatestGuideLineOptions] = useState({
     proEnabled: true,
-    showOtherLines: true
+    showOtherLines: true,
+    alignmentOrientation: 'horizontal' as GuideLineAlignmentOrientation,
+    alignmentPosition: 0.5,
+    alignmentPositionToleranceRatio: 0.05,
+    alignmentAngleToleranceDeg: 5
   });
   const [guideLineInfo, setGuideLineInfo] = useState<GuideLineInfo | null>(null);
   const [guideLineError, setGuideLineError] = useState('');
@@ -966,6 +1049,21 @@ function LivePusher() {
       latestGuideLineOptions.showOtherLines ||
       line.isAlignmentLine
   ) || [];
+  const hasVisibleSecondaryGuideLines = visibleGuideLines.some(line =>
+      line.isAlignmentLine !== true &&
+      line.id !== guideLineInfo?.selectedGuideLineId
+  );
+  const selectedGuideLine =
+      guideLineInfo?.guideLines.find(line =>
+        line.isAlignmentLine === true ||
+        line.id === guideLineInfo.selectedGuideLineId
+      ) || visibleGuideLines[0];
+  const targetGuideLineAngle =
+      guideLineInfo?.targetAngleDeg ??
+      (latestGuideLineOptions.alignmentOrientation === 'vertical' ? 90 : 0);
+  const currentGuideLineAngle =
+      guideLineInfo?.currentAngleDeg ??
+      getGuideLineSegmentAngleDeg(selectedGuideLine);
   const isDroneControl = controlDevice === 'drone';
   const movementSuggestions: Array<{ key: string; label: string; icon: JSX.Element }> = [];
   if (moveGuide?.pitch !== undefined && moveGuide.pitch !== 0) {
@@ -1331,9 +1429,16 @@ function LivePusher() {
           }
 
           if (effectiveAlgoType === 'guide_line' || parsed?.type === 'guide_line_result') {
+            const rawGuideLineInfo = parseGuideLineResult(parsed.raw);
+            const rootGuideLineInfo = parseGuideLineResult(parsed);
             const nextGuideLineInfo =
-              parseGuideLineResult(parsed.raw) ||
-              parseGuideLineResult(parsed);
+              rawGuideLineInfo && rootGuideLineInfo
+                ? {
+                  ...rootGuideLineInfo,
+                  ...rawGuideLineInfo,
+                  trackerRegion: rawGuideLineInfo.trackerRegion || rootGuideLineInfo.trackerRegion
+                }
+                : rawGuideLineInfo || rootGuideLineInfo;
             if (nextGuideLineInfo) {
               setGuideLineInfo(nextGuideLineInfo);
             }
@@ -1884,6 +1989,17 @@ function LivePusher() {
     fileInputRef.current?.click();
   };
 
+  const parseGuideLineNumberInput = (value: string, label: string) => {
+    if (!value.trim()) {
+      throw new Error(`${label}不能为空`);
+    }
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`${label}必须是有效数字`);
+    }
+    return parsed;
+  };
+
   const handleSubmitGuideLine = async () => {
     setGuideLineError('');
     setGuideLineInfo(null);
@@ -1894,7 +2010,33 @@ function LivePusher() {
         proEnabled: guideLineForm.proEnabled
       };
       if (guideLineForm.proEnabled) {
+        const alignmentPosition = parseGuideLineNumberInput(guideLineForm.alignmentPosition, '参考线位置');
+        const alignmentPositionTolerancePercent = parseGuideLineNumberInput(
+          guideLineForm.alignmentPositionTolerancePercent,
+          '位置容忍比例'
+        );
+        const alignmentAngleToleranceDeg = parseGuideLineNumberInput(
+          guideLineForm.alignmentAngleToleranceDeg,
+          '角度容忍度'
+        );
+
+        if (alignmentPosition < 0 || alignmentPosition > 1) {
+          throw new Error('参考线位置需在 0~1 之间');
+        }
+        if (alignmentPositionTolerancePercent < 0 || alignmentPositionTolerancePercent > 100) {
+          throw new Error('位置容忍比例需在 0~100% 之间');
+        }
+        if (alignmentAngleToleranceDeg < 0) {
+          throw new Error('角度容忍度不能小于 0 度');
+        }
+
         requestBody.showOtherLines = guideLineForm.showOtherLines;
+        requestBody.alignmentOrientation = guideLineForm.alignmentOrientation;
+        requestBody.alignmentPosition = alignmentPosition;
+        requestBody.alignmentPositionToleranceRatio = Number(
+          (alignmentPositionTolerancePercent / 100).toFixed(6)
+        );
+        requestBody.alignmentAngleToleranceDeg = alignmentAngleToleranceDeg;
       }
 
       const response = await fetch(WEB_SERVER, {
@@ -1907,10 +2049,30 @@ function LivePusher() {
       if (!response.ok) {
         throw new Error(`提交失败（HTTP ${response.status}）`);
       }
-      setLatestGuideLineOptions({
+      const nextGuideLineOptions = {
         proEnabled: guideLineForm.proEnabled,
-        showOtherLines: guideLineForm.proEnabled ? guideLineForm.showOtherLines : true
-      });
+        showOtherLines: guideLineForm.proEnabled ? guideLineForm.showOtherLines : true,
+        alignmentOrientation: guideLineForm.alignmentOrientation,
+        alignmentPosition: guideLineForm.proEnabled
+          ? requestBody.alignmentPosition ?? 0.5
+          : latestGuideLineOptions.alignmentPosition,
+        alignmentPositionToleranceRatio: guideLineForm.proEnabled
+          ? requestBody.alignmentPositionToleranceRatio ?? 0.05
+          : latestGuideLineOptions.alignmentPositionToleranceRatio,
+        alignmentAngleToleranceDeg: guideLineForm.proEnabled
+          ? requestBody.alignmentAngleToleranceDeg ?? 5
+          : latestGuideLineOptions.alignmentAngleToleranceDeg
+      };
+      setLatestGuideLineOptions(nextGuideLineOptions);
+      currentAlgoTypeRef.current = 'guide_line';
+      setCurrentAlgoType('guide_line');
+      setGuideLineInfo(prev =>
+        prev || {
+          guideLines: [],
+          lineCount: 0,
+          targetAngleDeg: nextGuideLineOptions.alignmentOrientation === 'vertical' ? 90 : 0
+        }
+      );
     } catch (err) {
       console.error('提交引导线失败', err);
       setGuideLineError((err as Error).message || '提交失败');
@@ -2480,14 +2642,16 @@ function LivePusher() {
                                 {latestGuideLineOptions.proEnabled && !latestGuideLineOptions.showOtherLines && (
                                     <div>当前展示线数：{visibleGuideLines.length}</div>
                                 )}
-                                <div>任务 ID：{guideLineInfo.taskId || '--'}</div>
-                                <div>接口任务 ID：{guideLineInfo.apiTaskId || '--'}</div>
-                                {guideLineInfo.frameSize && (
-                                    <div>
-                                      结果画幅：{guideLineInfo.frameSize.width} × {guideLineInfo.frameSize.height}
-                                    </div>
-                                )}
-                                {guideLineInfo.statusMessage && <div>说明：{guideLineInfo.statusMessage}</div>}
+                                <div>
+                                  目标角度 / 当前角度：
+                                  {targetGuideLineAngle !== undefined
+                                      ? `${targetGuideLineAngle.toFixed(1)}°`
+                                      : '--'}
+                                  {' / '}
+                                  {currentGuideLineAngle !== undefined
+                                      ? `${currentGuideLineAngle.toFixed(1)}°`
+                                      : '--'}
+                                </div>
                                 {guideLineInfo.resultUrl && (
                                     <div className="break-all">
                                       结果图：
@@ -2501,12 +2665,25 @@ function LivePusher() {
                                       </a>
                                     </div>
                                 )}
-                                {visibleGuideLines.length > 0 && (
+                                {(visibleGuideLines.length > 0 ||
+                                  latestGuideLineOptions.proEnabled ||
+                                  (guideLineInfo.trackerRegion && guideLineInfo.trackerRegion.available !== false)) && (
                                     <div className="rounded bg-black/20 px-2 py-1 space-y-1">
                                       <div className="font-medium">画面说明</div>
-                                      <div>绿色线 / 绿色圆点：对准线</div>
+                                      {latestGuideLineOptions.proEnabled && (
+                                          <>
+                                            <div>红色实线：引导线目标位置</div>
+                                            <div>红色虚线：允许偏差范围</div>
+                                          </>
+                                      )}
+                                      {visibleGuideLines.length > 0 && (
+                                          <div>绿色线 / 绿色圆点：对准线</div>
+                                      )}
                                       {latestGuideLineOptions.proEnabled && latestGuideLineOptions.showOtherLines && (
                                           <div>蓝色线 / 蓝色圆点：其他引导线</div>
+                                      )}
+                                      {guideLineInfo.trackerRegion && guideLineInfo.trackerRegion.available !== false && (
+                                          <div>绿色虚线框：追踪模块识别区域</div>
                                       )}
                                     </div>
                                 )}
@@ -2763,79 +2940,224 @@ function LivePusher() {
             {(currentAlgoType === 'guide_line') &&
                 guideLineInfo &&
                 containerSize &&
-                visibleGuideLines.length > 0 && (
+                (visibleGuideLines.length > 0 ||
+                  latestGuideLineOptions.proEnabled ||
+                  (guideLineInfo.trackerRegion && guideLineInfo.trackerRegion.available !== false)) && (
                 <div className="absolute inset-0 pointer-events-none">
-                  <svg
-                      className="absolute inset-0 h-full w-full"
-                      viewBox={`0 0 ${containerSize.width} ${containerSize.height}`}
-                  >
-                    {visibleGuideLines.map((guideLine, index) => {
-                      const clamp = (value: number, min: number, max: number) =>
-                          Math.max(min, Math.min(max, value));
-                      const mapPoint = (
-                        point?: [number, number],
-                        normalizedPoint?: [number, number]
-                      ): [number, number] | null => {
-                        if (normalizedPoint) {
-                          return [
-                            clamp(normalizedPoint[0] * containerSize.width, 0, containerSize.width),
-                            clamp(normalizedPoint[1] * containerSize.height, 0, containerSize.height)
-                          ];
-                        }
+                  {(() => {
+                    const clamp = (value: number, min: number, max: number) =>
+                        Math.max(min, Math.min(max, value));
+                    const mapTrackerRegionBox = (
+                      trackerRegion?: GuideLineInfo['trackerRegion']
+                    ): [number, number, number, number] | null => {
+                      if (!trackerRegion || trackerRegion.available === false) return null;
+                      const bboxNorm = trackerRegion.bboxNorm;
+                      if (bboxNorm) {
+                        const left = clamp(bboxNorm[0] * containerSize.width, 0, containerSize.width);
+                        const top = clamp(bboxNorm[1] * containerSize.height, 0, containerSize.height);
+                        const width = clamp(bboxNorm[2] * containerSize.width, 0, containerSize.width - left);
+                        const height = clamp(bboxNorm[3] * containerSize.height, 0, containerSize.height - top);
+                        return width > 0 && height > 0 ? [left, top, width, height] : null;
+                      }
 
-                        const widthBase = guideLineInfo.frameSize?.width || sourceSize?.width;
-                        const heightBase = guideLineInfo.frameSize?.height || sourceSize?.height;
-                        if (!point || !widthBase || !heightBase) return null;
-                        return [
-                          clamp((point[0] / widthBase) * containerSize.width, 0, containerSize.width),
-                          clamp((point[1] / heightBase) * containerSize.height, 0, containerSize.height)
-                        ];
-                      };
+                      const bbox = trackerRegion.bbox;
+                      const widthBase = guideLineInfo.frameSize?.width || sourceSize?.width;
+                      const heightBase = guideLineInfo.frameSize?.height || sourceSize?.height;
+                      if (!bbox || !widthBase || !heightBase) return null;
+                      const left = clamp((bbox[0] / widthBase) * containerSize.width, 0, containerSize.width);
+                      const top = clamp((bbox[1] / heightBase) * containerSize.height, 0, containerSize.height);
+                      const width = clamp((bbox[2] / widthBase) * containerSize.width, 0, containerSize.width - left);
+                      const height = clamp((bbox[3] / heightBase) * containerSize.height, 0, containerSize.height - top);
+                      return width > 0 && height > 0 ? [left, top, width, height] : null;
+                    };
+                    const trackerRegionBox = mapTrackerRegionBox(guideLineInfo.trackerRegion);
+                    const targetPosition = clamp(latestGuideLineOptions.alignmentPosition, 0, 1);
+                    const targetTolerance = Math.sqrt(
+                      containerSize.width ** 2 + containerSize.height ** 2
+                    ) * latestGuideLineOptions.alignmentPositionToleranceRatio;
+                    const isVerticalTarget = latestGuideLineOptions.alignmentOrientation === 'vertical';
+                    const targetAxisPosition = isVerticalTarget
+                      ? targetPosition * containerSize.width
+                      : targetPosition * containerSize.height;
+                    const targetRangeStart = clamp(
+                      targetAxisPosition - targetTolerance,
+                      0,
+                      isVerticalTarget ? containerSize.width : containerSize.height
+                    );
+                    const targetRangeEnd = clamp(
+                      targetAxisPosition + targetTolerance,
+                      0,
+                      isVerticalTarget ? containerSize.width : containerSize.height
+                    );
 
-                      const start = mapPoint(
-                        guideLine.points?.[0],
-                        guideLine.pointsNorm?.[0]
-                      );
-                      const end = mapPoint(
-                        guideLine.points?.[1],
-                        guideLine.pointsNorm?.[1]
-                      );
-                      if (!start || !end) return null;
-                      const guideLineColor =
-                        guideLine.isAlignmentLine === true ||
-                        guideLine.id === guideLineInfo.selectedGuideLineId
-                          ? ALGO_RESULT_COLOR
-                          : ALGO_RESULT_SECONDARY_LINE_COLOR;
-
-                      return (
-                          <g key={`${guideLine.id}-${index}`}>
-                            <line
-                                x1={start[0]}
-                                y1={start[1]}
-                                x2={end[0]}
-                                y2={end[1]}
-                                stroke={guideLineColor}
-                                strokeWidth="3"
-                                strokeLinecap="round"
+                    return (
+                      <svg
+                          className="absolute inset-0 h-full w-full"
+                          viewBox={`0 0 ${containerSize.width} ${containerSize.height}`}
+                      >
+                        {latestGuideLineOptions.proEnabled && (
+                            isVerticalTarget ? (
+                                <>
+                                  <rect
+                                      x={targetRangeStart}
+                                      y="0"
+                                      width={targetRangeEnd - targetRangeStart}
+                                      height={containerSize.height}
+                                      fill={ALGO_TARGET_COLOR_FAINT}
+                                      opacity="0.18"
+                                  />
+                                  <line
+                                      x1={targetAxisPosition}
+                                      y1="0"
+                                      x2={targetAxisPosition}
+                                      y2={containerSize.height}
+                                      stroke={ALGO_TARGET_COLOR}
+                                      strokeWidth="3"
+                                      vectorEffect="non-scaling-stroke"
+                                  />
+                                  <line
+                                      x1={targetRangeStart}
+                                      y1="0"
+                                      x2={targetRangeStart}
+                                      y2={containerSize.height}
+                                      stroke={ALGO_TARGET_COLOR}
+                                      strokeWidth="2"
+                                      strokeDasharray="8 6"
+                                      vectorEffect="non-scaling-stroke"
+                                  />
+                                  <line
+                                      x1={targetRangeEnd}
+                                      y1="0"
+                                      x2={targetRangeEnd}
+                                      y2={containerSize.height}
+                                      stroke={ALGO_TARGET_COLOR}
+                                      strokeWidth="2"
+                                      strokeDasharray="8 6"
+                                      vectorEffect="non-scaling-stroke"
+                                  />
+                                </>
+                            ) : (
+                                <>
+                                  <rect
+                                      x="0"
+                                      y={targetRangeStart}
+                                      width={containerSize.width}
+                                      height={targetRangeEnd - targetRangeStart}
+                                      fill={ALGO_TARGET_COLOR_FAINT}
+                                      opacity="0.18"
+                                  />
+                                  <line
+                                      x1="0"
+                                      y1={targetAxisPosition}
+                                      x2={containerSize.width}
+                                      y2={targetAxisPosition}
+                                      stroke={ALGO_TARGET_COLOR}
+                                      strokeWidth="3"
+                                      vectorEffect="non-scaling-stroke"
+                                  />
+                                  <line
+                                      x1="0"
+                                      y1={targetRangeStart}
+                                      x2={containerSize.width}
+                                      y2={targetRangeStart}
+                                      stroke={ALGO_TARGET_COLOR}
+                                      strokeWidth="2"
+                                      strokeDasharray="8 6"
+                                      vectorEffect="non-scaling-stroke"
+                                  />
+                                  <line
+                                      x1="0"
+                                      y1={targetRangeEnd}
+                                      x2={containerSize.width}
+                                      y2={targetRangeEnd}
+                                      stroke={ALGO_TARGET_COLOR}
+                                      strokeWidth="2"
+                                      strokeDasharray="8 6"
+                                      vectorEffect="non-scaling-stroke"
+                                  />
+                                </>
+                            )
+                        )}
+                        {trackerRegionBox && (
+                            <rect
+                                x={trackerRegionBox[0]}
+                                y={trackerRegionBox[1]}
+                                width={trackerRegionBox[2]}
+                                height={trackerRegionBox[3]}
+                                fill="none"
+                                stroke={ALGO_RESULT_COLOR}
+                                strokeWidth="2.5"
+                                strokeDasharray="8 6"
+                                vectorEffect="non-scaling-stroke"
                             />
-                            <circle cx={start[0]} cy={start[1]} r="4" fill={guideLineColor} />
-                            <circle cx={end[0]} cy={end[1]} r="4" fill={guideLineColor} />
-                            <text
-                                x={start[0] + 8}
-                                y={start[1] - 8}
-                                fontSize="12"
-                                fontWeight="600"
-                                fill={ALGO_RESULT_LABEL_COLOR}
-                                paintOrder="stroke"
-                                stroke="rgba(15,23,42,0.92)"
-                                strokeWidth="1.2"
-                            >
-                              L{guideLine.id}
-                            </text>
-                          </g>
-                      );
-                    })}
-                  </svg>
+                        )}
+                        {visibleGuideLines.map((guideLine, index) => {
+                          const mapPoint = (
+                            point?: [number, number],
+                            normalizedPoint?: [number, number]
+                          ): [number, number] | null => {
+                            if (normalizedPoint) {
+                              return [
+                                clamp(normalizedPoint[0] * containerSize.width, 0, containerSize.width),
+                                clamp(normalizedPoint[1] * containerSize.height, 0, containerSize.height)
+                              ];
+                            }
+
+                            const widthBase = guideLineInfo.frameSize?.width || sourceSize?.width;
+                            const heightBase = guideLineInfo.frameSize?.height || sourceSize?.height;
+                            if (!point || !widthBase || !heightBase) return null;
+                            return [
+                              clamp((point[0] / widthBase) * containerSize.width, 0, containerSize.width),
+                              clamp((point[1] / heightBase) * containerSize.height, 0, containerSize.height)
+                            ];
+                          };
+
+                          const start = mapPoint(
+                            guideLine.points?.[0],
+                            guideLine.pointsNorm?.[0]
+                          );
+                          const end = mapPoint(
+                            guideLine.points?.[1],
+                            guideLine.pointsNorm?.[1]
+                          );
+                          if (!start || !end) return null;
+                          const guideLineColor =
+                            guideLine.isAlignmentLine === true ||
+                            guideLine.id === guideLineInfo.selectedGuideLineId
+                              ? ALGO_RESULT_COLOR
+                              : ALGO_RESULT_SECONDARY_LINE_COLOR;
+
+                          return (
+                              <g key={`${guideLine.id}-${index}`}>
+                                <line
+                                    x1={start[0]}
+                                    y1={start[1]}
+                                    x2={end[0]}
+                                    y2={end[1]}
+                                    stroke={guideLineColor}
+                                    strokeWidth="3"
+                                    strokeLinecap="round"
+                                />
+                                <circle cx={start[0]} cy={start[1]} r="4" fill={guideLineColor} />
+                                <circle cx={end[0]} cy={end[1]} r="4" fill={guideLineColor} />
+                                <text
+                                    x={start[0] + 8}
+                                    y={start[1] - 8}
+                                    fontSize="12"
+                                    fontWeight="600"
+                                    fill={ALGO_RESULT_LABEL_COLOR}
+                                    paintOrder="stroke"
+                                    stroke="rgba(15,23,42,0.92)"
+                                    strokeWidth="1.2"
+                                >
+                                  L{guideLine.id}
+                                </text>
+                              </g>
+                          );
+                        })}
+                      </svg>
+                    );
+                  })()}
                 </div>
             )}
             {!isStreaming && (
@@ -3120,20 +3442,95 @@ function LivePusher() {
                     </label>
 
                     {guideLineForm.proEnabled ? (
-                        <label className="flex items-center gap-3 rounded bg-slate-900 px-3 py-3 text-sm text-white">
-                          <input
-                              type="checkbox"
-                              checked={guideLineForm.showOtherLines}
-                              onChange={e =>
-                                  setGuideLineForm(prev => ({
-                                    ...prev,
-                                    showOtherLines: e.target.checked
-                                  }))
-                              }
-                              className="h-4 w-4 rounded border-slate-500 bg-slate-800"
-                          />
-                          选择是否展示其他线条
-                        </label>
+                        <>
+                          <label className="flex items-center gap-3 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                            <input
+                                type="checkbox"
+                                checked={guideLineForm.showOtherLines}
+                                onChange={e =>
+                                    setGuideLineForm(prev => ({
+                                      ...prev,
+                                      showOtherLines: e.target.checked
+                                    }))
+                                }
+                                className="h-4 w-4 rounded border-slate-500 bg-slate-800"
+                            />
+                            选择是否展示其他线条
+                          </label>
+
+                          <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                            <span>引导线对准方向</span>
+                            <select
+                                value={guideLineForm.alignmentOrientation}
+                                onChange={e =>
+                                    setGuideLineForm(prev => ({
+                                      ...prev,
+                                      alignmentOrientation: e.target.value as GuideLineAlignmentOrientation
+                                    }))
+                                }
+                                className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
+                            >
+                              <option value="horizontal">水平（上下位置对准）</option>
+                              <option value="vertical">垂直（左右位置对准）</option>
+                            </select>
+                          </label>
+
+                          <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                            <span>参考线位置（0~1）</span>
+                            <input
+                                type="number"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                inputMode="decimal"
+                                value={guideLineForm.alignmentPosition}
+                                onChange={e =>
+                                    setGuideLineForm(prev => ({
+                                      ...prev,
+                                      alignmentPosition: e.target.value
+                                    }))
+                                }
+                                className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
+                            />
+                          </label>
+
+                          <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                            <span>位置容忍比例（%）</span>
+                            <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.1"
+                                inputMode="decimal"
+                                value={guideLineForm.alignmentPositionTolerancePercent}
+                                onChange={e =>
+                                    setGuideLineForm(prev => ({
+                                      ...prev,
+                                      alignmentPositionTolerancePercent: e.target.value
+                                    }))
+                                }
+                                className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
+                            />
+                          </label>
+
+                          <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                            <span>角度容忍度（度）</span>
+                            <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                inputMode="decimal"
+                                value={guideLineForm.alignmentAngleToleranceDeg}
+                                onChange={e =>
+                                    setGuideLineForm(prev => ({
+                                      ...prev,
+                                      alignmentAngleToleranceDeg: e.target.value
+                                    }))
+                                }
+                                className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
+                            />
+                          </label>
+                        </>
                     ) : (
                         <div className="rounded bg-slate-900 px-3 py-3 text-sm text-slate-400">
                           关闭 Pro 后，仅提交基础引导线模式参数。
