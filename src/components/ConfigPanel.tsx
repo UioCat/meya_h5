@@ -913,18 +913,18 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
   const [activeTab, setActiveTab] = useState<ConfigTab>('basic');
   const [isCompositionExpanded, setIsCompositionExpanded] = useState(false);
   const [expandedParamKey, setExpandedParamKey] = useState<string | null>(null);
-  const [bodyRangeLoaded, setBodyRangeLoaded] = useState(false);
+  const bodyRangeLoaded = true;
   const [bodyRangeExists, setBodyRangeExists] = useState(false);
-  const [bodyRangeLoading, setBodyRangeLoading] = useState(false);
+  const bodyRangeLoading = false;
   const [bodyRangeSaving, setBodyRangeSaving] = useState(false);
   const [bodyRangeError, setBodyRangeError] = useState('');
   const [bodyRangeCustomItems, setBodyRangeCustomItems] = useState<BodyRangeConfigItem[]>([]);
   const [bodyRangeCodeInput, setBodyRangeCodeInput] = useState('');
   const [bodyRangeNameInput, setBodyRangeNameInput] = useState('');
   const [editingBodyRangeValue, setEditingBodyRangeValue] = useState<string | null>(null);
-  const [shotTypeLoaded, setShotTypeLoaded] = useState(false);
+  const shotTypeLoaded = true;
   const [shotTypeExists, setShotTypeExists] = useState(false);
-  const [shotTypeLoading, setShotTypeLoading] = useState(false);
+  const shotTypeLoading = false;
   const [shotTypeSaving, setShotTypeSaving] = useState(false);
   const [shotTypeError, setShotTypeError] = useState('');
   const [shotTypeCustomItems, setShotTypeCustomItems] = useState<ShotTypeConfigItem[]>([]);
@@ -1000,75 +1000,11 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
     setEditingBodyRangeValue(null);
   };
 
-  const loadBodyRangeConfig = async () => {
-    setBodyRangeLoading(true);
-    setBodyRangeError('');
-    try {
-      const response = await fetch(
-        `${CONFIG_SERVER_BASE_URL}/kv?type=${encodeURIComponent(BODY_RANGE_CONFIG_TYPE)}&key=${encodeURIComponent(BODY_RANGE_CONFIG_KEY)}`
-      );
-      const text = await response.text();
-      const data = parseJsonSafely(text) as { value?: unknown; error?: string } | null;
-      if (response.status === 404) {
-        setBodyRangeCustomItems([]);
-        setBodyRangeExists(false);
-        setBodyRangeLoaded(true);
-        return;
-      }
-      if (!response.ok) {
-        throw new Error((data && typeof data.error === 'string' && data.error) || `HTTP ${response.status}`);
-      }
-      setBodyRangeCustomItems(parseBodyRangeCustomItems(data?.value));
-      setBodyRangeExists(true);
-      setBodyRangeLoaded(true);
-    } catch (error) {
-      setBodyRangeError((error as Error).message || '加载身体范围配置失败');
-    } finally {
-      setBodyRangeLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadBodyRangeConfig();
-  }, []);
-
   const resetShotTypeForm = () => {
     setShotTypeCodeInput('');
     setShotTypeNameInput('');
     setEditingShotTypeValue(null);
   };
-
-  const loadShotTypeConfig = async () => {
-    setShotTypeLoading(true);
-    setShotTypeError('');
-    try {
-      const response = await fetch(
-        `${CONFIG_SERVER_BASE_URL}/kv?type=${encodeURIComponent(SHOT_TYPE_CONFIG_TYPE)}&key=${encodeURIComponent(SHOT_TYPE_CONFIG_KEY)}`
-      );
-      const text = await response.text();
-      const data = parseJsonSafely(text) as { value?: unknown; error?: string } | null;
-      if (response.status === 404) {
-        setShotTypeCustomItems([]);
-        setShotTypeExists(false);
-        setShotTypeLoaded(true);
-        return;
-      }
-      if (!response.ok) {
-        throw new Error((data && typeof data.error === 'string' && data.error) || `HTTP ${response.status}`);
-      }
-      setShotTypeCustomItems(parseShotTypeCustomItems(data?.value));
-      setShotTypeExists(true);
-      setShotTypeLoaded(true);
-    } catch (error) {
-      setShotTypeError((error as Error).message || '加载景别类型配置失败');
-    } finally {
-      setShotTypeLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadShotTypeConfig();
-  }, []);
 
   const readShotRatioConfig = async () => {
     const response = await fetch(
@@ -1109,16 +1045,6 @@ function ConfigPanel({ notify }: ConfigPanelProps) {
     setSubjectRatioMatrix(prev => normalizeSubjectRatioEvaluationMatrix(prev, bodyRangeValues, shotTypeValues));
     setSubjectRatioDraft(prev => normalizeSubjectRatioEvaluationMatrix(prev, bodyRangeValues, shotTypeValues));
   }, [bodyRangeKey, shotTypeKey]);
-
-  useEffect(() => {
-    if (activeTab !== 'template') return;
-    if (!bodyRangeLoaded && !bodyRangeLoading) {
-      void loadBodyRangeConfig();
-    }
-    if (!shotTypeLoaded && !shotTypeLoading) {
-      void loadShotTypeConfig();
-    }
-  }, [activeTab, bodyRangeLoaded, bodyRangeLoading, shotTypeLoaded, shotTypeLoading]);
 
   useEffect(() => {
     if (activeTab !== 'template' || !bodyRangeLoaded || !shotTypeLoaded) return;

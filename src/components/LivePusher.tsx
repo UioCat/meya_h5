@@ -2679,7 +2679,7 @@ function LivePusher() {
                                       {visibleGuideLines.length > 0 && (
                                           <div>绿色线 / 绿色圆点：对准线</div>
                                       )}
-                                      {latestGuideLineOptions.proEnabled && latestGuideLineOptions.showOtherLines && (
+                                      {latestGuideLineOptions.proEnabled && latestGuideLineOptions.showOtherLines && hasVisibleSecondaryGuideLines && (
                                           <div>蓝色线 / 蓝色圆点：其他引导线</div>
                                       )}
                                       {guideLineInfo.trackerRegion && guideLineInfo.trackerRegion.available !== false && (

@@ -2,9 +2,10 @@ import { Camera, Images, Settings } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import ConfigPanel from './components/ConfigPanel';
 import LivePusher from './components/LivePusher';
+import PhotoLibrary from './components/PhotoLibrary';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'capture' | 'config'>('capture');
+  const [activeTab, setActiveTab] = useState<'capture' | 'gallery' | 'config'>('capture');
   const [toastMessage, setToastMessage] = useState('');
 
   const showToast = (message: string) => {
@@ -19,10 +20,6 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
 
-  const handleOpenGallery = () => {
-    showToast('目前当前还未支持');
-  };
-
   const navButtonClass = (active: boolean) =>
     `flex min-h-[58px] w-full flex-col items-center justify-center gap-1 rounded-2xl border px-3 py-2 text-xs transition sm:min-h-[62px] ${
       active
@@ -36,6 +33,9 @@ function App() {
         <div className="w-full">
           <div className={activeTab === 'capture' ? 'block' : 'hidden'}>
             <LivePusher />
+          </div>
+          <div className={activeTab === 'gallery' ? 'block' : 'hidden'}>
+            <PhotoLibrary notify={showToast} />
           </div>
           <div className={activeTab === 'config' ? 'block' : 'hidden'}>
             <ConfigPanel notify={showToast} />
@@ -64,10 +64,10 @@ function App() {
               <span className="font-medium leading-none">拍摄</span>
             </button>
             <button
-              onClick={handleOpenGallery}
-              className={navButtonClass(false)}
+              onClick={() => setActiveTab('gallery')}
+              className={navButtonClass(activeTab === 'gallery')}
             >
-              <Images className="h-[18px] w-[18px] text-slate-400" />
+              <Images className={`h-[18px] w-[18px] ${activeTab === 'gallery' ? 'text-sky-300' : 'text-slate-400'}`} />
               <span className="font-medium leading-none">照片库</span>
             </button>
             <button
