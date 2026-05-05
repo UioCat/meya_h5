@@ -400,3 +400,5 @@
   "mouthStatus": "微笑"
 }
 ```
+
+勾选 `IBVS模式` 后，提交体其余字段保持一致，仅 `type` 改为 `IBVS_ALGO`。

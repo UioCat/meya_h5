@@ -24,7 +24,7 @@
 
 ## 3. 请求体结构
 
-请求体固定为：
+请求体默认为：
 
 ```json
 {
@@ -48,7 +48,7 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `type` | `string` | 是 | 固定值：`alignment_person` |
+| `type` | `string` | 是 | 默认值：`alignment_person`；勾选 `IBVS模式` 后为 `IBVS_ALGO` |
 | `templateKey` | `string` | 是 | 当前选中的意图模版名称 |
 | `streamUrl` | `string` | 是 | 由页面中的“视频来源”选项决定。`手机 -> http://play.uiofield.top/live/stream.flv`，`无人机 -> http://localhost:8080/live/stream.flv` |
 | `scene` | `string` | 是 | 由模版中的 `shotType` 解析得到，例如 `B1特写 -> 特写` |
@@ -69,7 +69,7 @@
 ### 4.1.1 固定值或无固定枚举的字段
 
 - `type`
-  固定值：`alignment_person`
+  默认值：`alignment_person`；勾选 `IBVS模式` 后为 `IBVS_ALGO`
 - `templateKey`
   无固定枚举。
   取值来源：配置服务中 `type = intent_template` 的 `key`。

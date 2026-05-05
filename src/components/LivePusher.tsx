@@ -103,6 +103,9 @@ const normalizeAlgoType = (value: unknown): AlgoType | null => {
   if (value === 'upload_template' || value === 'alignment_person' || value === 'guide_line') {
     return value;
   }
+  if (value === 'IBVS_ALGO' || value === 'ibvs_algo') {
+    return 'alignment_person';
+  }
   if (value === 'guideline' || value === 'guide_line_detect') {
     return 'guide_line';
   }
@@ -958,7 +961,7 @@ const parseSubjectRatioScoreBounds = (value: string): { ratioMin: string; ratioM
 };
 
 type AlignmentPersonPayload = {
-  type: 'alignment_person';
+  type: 'alignment_person' | 'IBVS_ALGO';
   templateKey: string;
   streamUrl: string;
   scene: string;
@@ -1164,6 +1167,7 @@ function LivePusher() {
   const [selectedAlignmentTemplateKey, setSelectedAlignmentTemplateKey] = useState('');
   const [alignmentTemplateLoading, setAlignmentTemplateLoading] = useState(false);
   const [alignmentError, setAlignmentError] = useState('');
+  const [alignmentIbvsMode, setAlignmentIbvsMode] = useState(false);
   const [guideLineForm, setGuideLineForm] = useState({
     proEnabled: true,
     showOtherLines: true,
@@ -1489,6 +1493,7 @@ function LivePusher() {
           const incomingAlgoType: AlgoType | null =
               normalizeAlgoType(parsed?.algoType) ||
               normalizeAlgoType(parsed?.raw?.algoType) ||
+              normalizeAlgoType(parsed?.type) ||
               (parsed?.type === 'guide_line_result' || parsed?.raw?.type === 'guide_line_result'
                   ? 'guide_line'
                   : null);
@@ -2585,7 +2590,7 @@ function LivePusher() {
       setPersonCenterPositionOffsetPercent(3);
 
       const requestBody: AlignmentPersonPayload = {
-        type: 'alignment_person',
+        type: alignmentIbvsMode ? 'IBVS_ALGO' : 'alignment_person',
         templateKey: selectedAlignmentTemplate.key,
         streamUrl: getStreamUrlBySource(controlDevice),
         scene: concreteScene,
@@ -3066,6 +3071,16 @@ function LivePusher() {
                         </div>
                     )}
                   </div>
+
+                  <label className="flex items-center gap-3 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                    <input
+                        type="checkbox"
+                        checked={alignmentIbvsMode}
+                        onChange={e => setAlignmentIbvsMode(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-500 bg-slate-800"
+                    />
+                    IBVS模式
+                  </label>
 
                   <button
                       onClick={handleSubmitAlignmentPerson}
