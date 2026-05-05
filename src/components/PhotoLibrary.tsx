@@ -29,11 +29,23 @@ type GuideLineLlmResult = {
   llm?: Record<string, unknown>;
 };
 
+type PreparedPhotoUpload = {
+  filename: string;
+  contentType: string;
+  data: string;
+  size: number;
+  compressed: boolean;
+};
+
 const CONFIG_SERVER_BASE_URL = 'https://www.uiofield.top/config_server';
 const WEB_SERVER = 'https://www.uiofield.top/meya/push';
 const WS_SERVER = 'wss://www.uiofield.top/meya/ws';
 const PHOTO_LIBRARY_TYPE = 'photo_library';
 const MAX_PHOTO_COUNT = 10;
+const PHOTO_UPLOAD_MAX_EDGE = 1280;
+const PHOTO_UPLOAD_TARGET_BYTES = 900 * 1024;
+const PHOTO_UPLOAD_JPEG_QUALITY = 0.72;
+const PHOTO_UPLOAD_MIN_JPEG_QUALITY = 0.5;
 
 const parseJsonSafely = (text: string) => {
   const trimmed = text.trim();
@@ -49,6 +61,9 @@ const summarizeResponseText = (text: string) => {
   const trimmed = text.trim();
   return trimmed.length > 160 ? `${trimmed.slice(0, 160)}...` : trimmed;
 };
+
+const getErrorMessage = (error: unknown, fallback: string) =>
+  error instanceof Error && error.message ? error.message : fallback;
 
 const normalizePhotoValue = (
   value: unknown,
@@ -162,6 +177,129 @@ const getImageBase64Payload = (dataUrl: string) => {
   return commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl;
 };
 
+const readFileAsDataUrl = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+const readBlobAsDataUrl = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
+const loadImageFromDataUrl = (dataUrl: string) =>
+  new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('图片读取失败，请换一张图片后重试'));
+    image.src = dataUrl;
+  });
+
+const canvasToJpegBlob = (canvas: HTMLCanvasElement, quality: number) =>
+  new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (!blob) {
+        reject(new Error('图片压缩失败，请换一张图片后重试'));
+        return;
+      }
+      resolve(blob);
+    }, 'image/jpeg', quality);
+  });
+
+const getScaledImageSize = (width: number, height: number, maxEdge: number) => {
+  const largestEdge = Math.max(width, height);
+  if (largestEdge <= maxEdge) {
+    return { width, height };
+  }
+
+  const ratio = maxEdge / largestEdge;
+  return {
+    width: Math.max(1, Math.round(width * ratio)),
+    height: Math.max(1, Math.round(height * ratio))
+  };
+};
+
+const toJpegFilename = (filename: string) => {
+  const normalized = filename.trim() || `photo-${Date.now()}`;
+  return /\.[^./\\]+$/.test(normalized)
+    ? normalized.replace(/\.[^./\\]+$/, '.jpg')
+    : `${normalized}.jpg`;
+};
+
+const compressPhotoUpload = async (file: File): Promise<PreparedPhotoUpload> => {
+  const originalData = await readFileAsDataUrl(file);
+
+  let image: HTMLImageElement;
+  try {
+    image = await loadImageFromDataUrl(originalData);
+  } catch (error) {
+    if (file.size <= PHOTO_UPLOAD_TARGET_BYTES) {
+      return {
+        filename: file.name,
+        contentType: file.type || 'image/*',
+        data: originalData,
+        size: file.size,
+        compressed: false
+      };
+    }
+    throw error;
+  }
+
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  if (!sourceWidth || !sourceHeight) {
+    throw new Error('无法读取图片尺寸，请换一张图片后重试');
+  }
+
+  const shouldCompress =
+    file.size > PHOTO_UPLOAD_TARGET_BYTES ||
+    sourceWidth > PHOTO_UPLOAD_MAX_EDGE ||
+    sourceHeight > PHOTO_UPLOAD_MAX_EDGE;
+
+  if (!shouldCompress) {
+    return {
+      filename: file.name,
+      contentType: file.type || 'image/*',
+      data: originalData,
+      size: file.size,
+      compressed: false
+    };
+  }
+
+  const { width, height } = getScaledImageSize(sourceWidth, sourceHeight, PHOTO_UPLOAD_MAX_EDGE);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('当前浏览器不支持图片压缩');
+  }
+
+  ctx.drawImage(image, 0, 0, width, height);
+
+  let quality = PHOTO_UPLOAD_JPEG_QUALITY;
+  let blob = await canvasToJpegBlob(canvas, quality);
+  while (blob.size > PHOTO_UPLOAD_TARGET_BYTES && quality > PHOTO_UPLOAD_MIN_JPEG_QUALITY) {
+    quality = Math.max(PHOTO_UPLOAD_MIN_JPEG_QUALITY, quality - 0.08);
+    blob = await canvasToJpegBlob(canvas, quality);
+  }
+
+  return {
+    filename: toJpegFilename(file.name),
+    contentType: 'image/jpeg',
+    data: await readBlobAsDataUrl(blob),
+    size: blob.size,
+    compressed: true
+  };
+};
+
 const formatFileSize = (size: number) => {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -242,8 +380,8 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
           resultTimeoutRef.current = null;
         }
         notifyRef.current?.('引导线-LLM 分析完成');
-      } catch (err: any) {
-        setAlgorithmError(err.message || '解析引导线-Lite 结果失败');
+      } catch (err) {
+        setAlgorithmError(getErrorMessage(err, '解析引导线-Lite 结果失败'));
         setAlgorithmSubmitting(false);
       }
     };
@@ -311,8 +449,8 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
       setSelectedKey(prev => (nextItems.some(item => item.key === prev) ? prev : nextItems[0]?.key || ''));
       setAlgorithmResult(null);
       setAlgorithmError('');
-    } catch (err: any) {
-      setError(err.message || '加载照片失败');
+    } catch (err) {
+      setError(getErrorMessage(err, '加载照片失败'));
     } finally {
       setLoading(false);
     }
@@ -321,14 +459,6 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
   useEffect(() => {
     void loadPhotos();
   }, []);
-
-  const readFileAsDataUrl = (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -346,25 +476,31 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
     setSaving(true);
     setError('');
     try {
-      const data = await readFileAsDataUrl(file);
-      const safeName = file.name.replace(/[^\w.\-\u4e00-\u9fa5]+/g, '_');
+      const preparedPhoto = await compressPhotoUpload(file);
+      const safeName = preparedPhoto.filename.replace(/[^\w.\-\u4e00-\u9fa5]+/g, '_');
       const key = `${Date.now()}_${safeName}`;
       await postJson('/kv/create', {
         type: PHOTO_LIBRARY_TYPE,
         key,
         value: {
-          filename: file.name,
-          contentType: file.type || 'image/*',
-          data,
-          size: file.size,
+          filename: preparedPhoto.filename,
+          contentType: preparedPhoto.contentType,
+          data: preparedPhoto.data,
+          size: preparedPhoto.size,
           createdAt: Date.now()
         }
       });
       await loadPhotos();
       setSelectedKey(key);
-      notify?.('照片已上传');
-    } catch (err: any) {
-      setError(err.message || '上传照片失败');
+      notify?.(
+        preparedPhoto.compressed && preparedPhoto.size < file.size
+          ? `照片已压缩上传：${formatFileSize(file.size)} -> ${formatFileSize(preparedPhoto.size)}`
+          : preparedPhoto.compressed
+            ? `照片已压缩上传：最长边 ${PHOTO_UPLOAD_MAX_EDGE}px`
+            : '照片已上传'
+      );
+    } catch (err) {
+      setError(getErrorMessage(err, '上传照片失败'));
     } finally {
       setSaving(false);
     }
@@ -381,8 +517,8 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
       });
       await loadPhotos();
       notify?.('照片已删除');
-    } catch (err: any) {
-      setError(err.message || '删除照片失败');
+    } catch (err) {
+      setError(getErrorMessage(err, '删除照片失败'));
     } finally {
       setSaving(false);
     }
@@ -446,10 +582,10 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
         setAlgorithmSubmitting(false);
         setAlgorithmError('已提交任务，但暂未收到 WebSocket 返回结果');
       }, 60000);
-    } catch (err: any) {
+    } catch (err) {
       pendingTaskIdRef.current = '';
       setAlgorithmSubmitting(false);
-      setAlgorithmError(err.message || '引导线-LLM 分析失败');
+      setAlgorithmError(getErrorMessage(err, '引导线-LLM 分析失败'));
     }
   };
 
@@ -529,11 +665,11 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
           <div className="mb-3 text-sm text-slate-300">当前选择</div>
           {selectedPhoto ? (
             <div className="space-y-3">
-              <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-slate-950 sm:aspect-[16/10]">
+              <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden rounded-xl bg-slate-950 sm:aspect-[16/10]">
                 <img
                   src={selectedPhoto.value.data}
                   alt={selectedPhoto.value.filename}
-                  className="h-full w-full object-cover"
+                  className="max-h-full max-w-full object-contain"
                 />
               </div>
               <div className="rounded-xl bg-slate-900 px-3 py-3 text-sm">
@@ -585,19 +721,19 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
           </div>
           {selectedPhoto ? (
             <div className="space-y-3">
-              <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-slate-950 sm:aspect-[16/10]">
+              <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden rounded-xl bg-slate-950 sm:aspect-[16/10]">
                 {algorithmResult ? (
                   <img
                     src={algorithmResult.imageDataUrl}
                     alt={`${selectedPhoto.value.filename} 算法结果`}
-                    className="h-full w-full object-cover"
+                    className="max-h-full max-w-full object-contain"
                   />
                 ) : (
                   <>
                     <img
                       src={selectedPhoto.value.data}
                       alt={`${selectedPhoto.value.filename} 算法结果占位`}
-                      className="h-full w-full object-cover opacity-40"
+                      className="max-h-full max-w-full object-contain opacity-40"
                     />
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/45 px-4 text-center">
                       {algorithmSubmitting ? (
