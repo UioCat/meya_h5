@@ -1,11 +1,23 @@
 import { useState, useRef, useEffect } from 'react';
-import { Camera, ChevronUp, ChevronDown, Radio, Video } from 'lucide-react';
+import { Camera, Radio, Video } from 'lucide-react';
 import {
   intentTemplateOptions,
   normalizeCompositionObjectValue,
   normalizeOptionValue,
   stripOptionCode
 } from '../shared/intentTemplateOptions';
+import {
+  AnalysisDisplayPanel,
+  DisplayOverlayLayer,
+  DisplayPromptLayer,
+  normalizeLiveDisplayPayload,
+  type DisplayPanel,
+  type DisplayPoint,
+  type DisplayPrimitive,
+  type DisplayPrompt,
+  type DisplayRect,
+  type LiveDisplayModel
+} from './LiveDisplay';
 
 declare global {
   interface Window {
@@ -64,49 +76,7 @@ type AlgoType = 'upload_template' | 'alignment_person' | 'guide_line';
 
 type ActiveMode = 'image_search' | 'alignment_person' | 'guide_line' | null;
 
-const CENTER_ALIGNMENT_GUIDE_VIEWBOX = 300;
-
-const CENTER_ALIGNMENT_GUIDE_TOP_LABELS = [
-  { label: 'V0', x: 6, y: 10, anchor: 'start' as const, muted: false },
-  { label: 'V1', x: 100, y: 10, anchor: 'middle' as const, muted: false },
-  { label: 'V1.5', x: 150, y: 10, anchor: 'middle' as const, muted: true },
-  { label: 'V2', x: 200, y: 10, anchor: 'middle' as const, muted: false },
-  { label: 'V2.75', x: 275, y: 10, anchor: 'middle' as const, muted: true },
-  { label: 'V3', x: 294, y: 10, anchor: 'end' as const, muted: false }
-];
-
-const CENTER_ALIGNMENT_GUIDE_LEFT_LABELS = [
-  { label: 'H0', y: 6, percent: '', muted: false },
-  { label: 'H0.5', y: 50, percent: '50%', muted: true },
-  { label: 'H1', y: 100, percent: '', muted: false },
-  { label: 'H1.33', y: 133, percent: '30%', muted: true },
-  { label: 'H1.66', y: 166, percent: '', muted: true },
-  { label: 'H2', y: 200, percent: '', muted: false },
-  { label: 'H2.25', y: 225, percent: '25%', muted: true },
-  { label: 'H2.5', y: 250, percent: '', muted: true },
-  { label: 'H3', y: 294, percent: '', muted: false }
-];
-
-const CENTER_ALIGNMENT_GUIDE_POINTS = [
-  { label: 'H0.5V1.5', x: 150, y: 50, dx: -8, dy: -10, anchor: 'end' as const },
-  { label: 'H1V1', x: 100, y: 100, dx: -2, dy: -10, anchor: 'end' as const },
-  { label: 'H1V2', x: 200, y: 100, dx: 2, dy: -10, anchor: 'start' as const },
-  { label: 'H2V1', x: 100, y: 200, dx: -2, dy: -10, anchor: 'end' as const },
-  { label: 'H2V2', x: 200, y: 200, dx: 2, dy: -10, anchor: 'start' as const },
-  { label: 'H2.25V2.75', x: 275, y: 225, dx: -2, dy: 6, anchor: 'end' as const }
-];
-
 const HEIGHT_STAGE_RANGE_HALF_RATIO = 0.035;
-
-// Semantic overlay colors: detected content stays green, target regions stay red.
-const ALGO_RESULT_COLOR = '#34D399';
-const ALGO_RESULT_SECONDARY_LINE_COLOR = '#3B82F6';
-const ALGO_RESULT_COLOR_SOFT = 'rgba(52, 211, 153, 0.9)';
-const ALGO_TARGET_COLOR = '#EF4444';
-const ALGO_TARGET_COLOR_SOFT = 'rgba(239, 68, 68, 0.8)';
-const ALGO_TARGET_COLOR_WEAK = 'rgba(239, 68, 68, 0.7)';
-const ALGO_TARGET_COLOR_FAINT = 'rgba(239, 68, 68, 0.6)';
-const ALGO_RESULT_LABEL_COLOR = '#A7F3D0';
 
 const parseOverlayPoint = (value: unknown): [number, number] | null => {
   if (!Array.isArray(value) || value.length !== 2) return null;
@@ -166,6 +136,31 @@ type GuideLineInfo = {
   };
   resultUrl?: string;
   apiTaskId?: string;
+};
+
+type AlignmentRawInfo = {
+  ratio?: number;
+  bbox?: [number, number, number, number];
+  centerPoint?: [number, number];
+  heightReferencePoint?: [number, number];
+  targetBox?: [number, number, number, number];
+  compositionObjectBox?: [number, number, number, number];
+  compositionObjectCenterPoint?: [number, number];
+  compositionObjectName?: string;
+  yaw?: number;
+};
+
+type ImageSearchInfo = {
+  statusCode?: number;
+  statusMessage?: string;
+  matchedPoints?: number;
+  quad?: {
+    leftTop: [number, number];
+    rightTop: [number, number];
+    rightBottom: [number, number];
+    leftBottom: [number, number];
+  };
+  targetCenter?: [number, number];
 };
 
 const parseGuideLineSegmentPoints = (
@@ -405,245 +400,518 @@ const getHeightReferencePoint = (
   return undefined;
 };
 
-function CenterAlignmentGuideOverlay() {
-  return (
-    <div className="absolute inset-0 pointer-events-none select-none">
-      <svg
-        className="h-full w-full"
-        viewBox={`0 0 ${CENTER_ALIGNMENT_GUIDE_VIEWBOX} ${CENTER_ALIGNMENT_GUIDE_VIEWBOX}`}
-        preserveAspectRatio="none"
-      >
-        <rect
-          x="0"
-          y="0"
-          width={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
-          height={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
-          fill="none"
-          stroke="rgba(255,255,255,0.72)"
-          strokeWidth="1.25"
-          vectorEffect="non-scaling-stroke"
-        />
+const createEmptyDisplayModel = (): LiveDisplayModel => ({
+  panel: null,
+  overlays: [],
+  videoPrompts: [],
+  viewportPrompts: []
+});
 
-        {[100, 200].map(x => (
-          <line
-            key={`solid-v-${x}`}
-            x1={x}
-            y1="0"
-            x2={x}
-            y2={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
-            stroke="rgba(255,255,255,0.48)"
-            strokeWidth="1"
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-        {[100, 200].map(y => (
-          <line
-            key={`solid-h-${y}`}
-            x1="0"
-            y1={y}
-            x2={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
-            y2={y}
-            stroke="rgba(255,255,255,0.48)"
-            strokeWidth="1"
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
+const toSourcePoint = (point: [number, number]): DisplayPoint => ({
+  x: point[0],
+  y: point[1],
+  space: 'source'
+});
 
-        {[150, 275].map(x => (
-          <line
-            key={`dash-v-${x}`}
-            x1={x}
-            y1="0"
-            x2={x}
-            y2={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
-            stroke="rgba(255,255,255,0.34)"
-            strokeWidth="1"
-            strokeDasharray="4 4"
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
-        {[50, 133, 166, 225, 250].map(y => (
-          <line
-            key={`dash-h-${y}`}
-            x1="0"
-            y1={y}
-            x2={CENTER_ALIGNMENT_GUIDE_VIEWBOX}
-            y2={y}
-            stroke="rgba(255,255,255,0.34)"
-            strokeWidth="1"
-            strokeDasharray="4 4"
-            vectorEffect="non-scaling-stroke"
-          />
-        ))}
+const toNormalizedPoint = (point: [number, number]): DisplayPoint => ({
+  x: point[0],
+  y: point[1],
+  space: 'normalized'
+});
 
-        {CENTER_ALIGNMENT_GUIDE_TOP_LABELS.map(item => (
-          <text
-            key={item.label}
-            x={item.x}
-            y={item.y}
-            textAnchor={item.anchor}
-            dominantBaseline="hanging"
-            fontSize="9"
-            fontWeight={item.muted ? '500' : '600'}
-            fill={item.muted ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.86)'}
-            paintOrder="stroke"
-            stroke="rgba(15,23,42,0.82)"
-            strokeWidth="1"
-          >
-            {item.label}
-          </text>
-        ))}
+const toSourceRect = (box: [number, number, number, number]): DisplayRect => ({
+  x: box[0],
+  y: box[1],
+  width: box[2],
+  height: box[3],
+  space: 'source'
+});
 
-        {CENTER_ALIGNMENT_GUIDE_LEFT_LABELS.map(item => (
-          <g key={item.label}>
-            <text
-              x="6"
-              y={item.y}
-              textAnchor="start"
-              dominantBaseline="middle"
-              fontSize="9"
-              fontWeight={item.muted ? '500' : '600'}
-              fill={item.muted ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.86)'}
-              paintOrder="stroke"
-              stroke="rgba(15,23,42,0.82)"
-              strokeWidth="1"
-            >
-              {item.label}
-            </text>
-            {item.percent ? (
-              <text
-                x="6"
-                y={item.y + 7}
-                textAnchor="start"
-                dominantBaseline="middle"
-                fontSize="6"
-                fill="rgba(255,255,255,0.42)"
-                paintOrder="stroke"
-                stroke="rgba(15,23,42,0.82)"
-                strokeWidth="0.8"
-              >
-                {item.percent}
-              </text>
-            ) : null}
-          </g>
-        ))}
+const toNormalizedRect = (box: [number, number, number, number]): DisplayRect => ({
+  x: box[0],
+  y: box[1],
+  width: box[2],
+  height: box[3],
+  space: 'normalized'
+});
 
-        {CENTER_ALIGNMENT_GUIDE_POINTS.map(point => (
-          <g key={point.label}>
-            <circle
-              cx={point.x}
-              cy={point.y}
-              r="1.75"
-              fill="#7dd3fc"
-              stroke="rgba(15,23,42,0.92)"
-              strokeWidth="0.8"
-              vectorEffect="non-scaling-stroke"
-            />
-            <text
-              x={point.x + point.dx}
-              y={point.y + point.dy}
-              textAnchor={point.anchor}
-              dominantBaseline="middle"
-              fontSize="8"
-              fill="rgba(255,255,255,0.86)"
-              paintOrder="stroke"
-              stroke="rgba(15,23,42,0.88)"
-              strokeWidth="1"
-            >
-              {point.label}
-            </text>
-          </g>
-        ))}
-      </svg>
-    </div>
-  );
-}
+const formatRatio = (value: number | undefined) =>
+  value !== undefined ? `${(value * 100).toFixed(2)}%` : '--';
 
-function VerticalDirectionIcon({
-  direction,
-  className = 'w-10 h-10'
+const formatDegree = (value: number | undefined) =>
+  value !== undefined ? `${value.toFixed(2)}°` : '--';
+
+const formatGuideDegree = (value: number | undefined) =>
+  value !== undefined ? `${value.toFixed(1)}°` : '--';
+
+const hasAlignmentDisplayData = (rawInfo: AlignmentRawInfo | null) =>
+  Boolean(rawInfo?.bbox) ||
+  Boolean(rawInfo?.centerPoint) ||
+  Boolean(rawInfo?.targetBox) ||
+  Boolean(rawInfo?.compositionObjectBox) ||
+  Boolean(rawInfo?.compositionObjectCenterPoint) ||
+  rawInfo?.ratio !== undefined ||
+  rawInfo?.yaw !== undefined;
+
+const getImageSearchStatusLabel = (statusCode?: number) => {
+  if (statusCode === 201) return '发现目标';
+  if (statusCode === 202) return '定位成功';
+  if (statusCode === 203) return '未发现目标';
+  return '--';
+};
+
+const getLineIntersection = (
+  a: [number, number],
+  b: [number, number],
+  c: [number, number],
+  d: [number, number]
+): [number, number] | null => {
+  const x1 = a[0], y1 = a[1];
+  const x2 = b[0], y2 = b[1];
+  const x3 = c[0], y3 = c[1];
+  const x4 = d[0], y4 = d[1];
+  const denominator = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+  if (Math.abs(denominator) < 1e-6) return null;
+  const px =
+    ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) /
+    denominator;
+  const py =
+    ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) /
+    denominator;
+  return [px, py];
+};
+
+const buildAlignmentDisplayModel = ({
+  currentAlgoLabel,
+  currentStage,
+  isActiveAlignmentRun,
+  isHeightAlignmentStage,
+  isDistanceAlignmentStage,
+  isCenterAlignmentStage,
+  rawInfo,
+  sourceSize,
+  effectiveAlignmentCameraHeight,
+  personCenterPosition,
+  personCenterPositionOffsetPercent
 }: {
-  direction: 'up' | 'down';
-  className?: string;
-}) {
-  return direction === 'up' ? (
-      <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-        <path
-            d="M511.879529 0L60.235294 477.906824l290.514824-0.120471 0.783058 545.731765 321.355295 0.481882V477.786353L963.764706 478.027294 511.879529 0z"
-            fill="#46bc4e"
-        />
-      </svg>
-  ) : (
-      <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-        <path
-            d="M512.120471 1024L963.764706 546.093176l-290.514824 0.120471-0.783058-545.731765L351.111529 0v546.213647L60.235294 545.972706 512.120471 1024z"
-            fill="#46bc4e"
-        />
-      </svg>
-  );
-}
+  currentAlgoLabel: string;
+  currentStage: string;
+  isActiveAlignmentRun: boolean;
+  isHeightAlignmentStage: boolean;
+  isDistanceAlignmentStage: boolean;
+  isCenterAlignmentStage: boolean;
+  rawInfo: AlignmentRawInfo | null;
+  sourceSize: { width: number; height: number } | null;
+  effectiveAlignmentCameraHeight: string;
+  personCenterPosition: string;
+  personCenterPositionOffsetPercent: number;
+}): LiveDisplayModel | null => {
+  const hasAnalysis = hasAlignmentDisplayData(rawInfo);
+  if (!isActiveAlignmentRun || (!currentStage && !hasAnalysis)) return null;
 
-function HorizontalDirectionIcon({
-  direction,
-  className = 'w-10 h-10'
-}: {
-  direction: 'left' | 'right';
-  className?: string;
-}) {
-  return direction === 'left' ? (
-      <svg className={className} viewBox="0 0 1137 1024" xmlns="http://www.w3.org/2000/svg">
-        <path
-            d="M1051.648 728.860444H552.732444v265.936593a61.591704 61.591704 0 0 1-87.115851 0.113778l-0.113778-0.113778-436.148148-439.333926a62.65363 62.65363 0 0 1 0-88.026074L465.464889 28.48237a60.946963 60.946963 0 0 1 86.167704-1.061926l1.061926 1.061926v265.519408h498.953481c40.997926 0 74.258963 33.261037 74.258963 74.258963v286.34074a74.221037 74.221037 0 0 1-74.258963 74.258963z"
-            fill="#46bc4e"
-        />
-      </svg>
-  ) : (
-      <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-        <path
-            d="M997.052632 512L458.105263 0v323.368421H26.947368v377.263158h431.157895v323.368421l538.947369-512z"
-            fill="#46bc4e"
-        />
-        <path
-            d="M929.738105 512l-431.157894-404.210526v260.473263l-430.618948 0.377263-0.538947 287.312842 431.157895-2.479158V916.210526l431.157894-404.210526z"
-            fill="#46bc4e"
-        />
-      </svg>
-  );
-}
+  const overlays: DisplayPrimitive[] = [];
+  const explanationRows: DisplayPanel['sections'][number]['rows'] = [];
+  const shouldShowCompositionOverlay =
+    isCenterAlignmentStage &&
+    (Boolean(rawInfo?.targetBox) ||
+      Boolean(rawInfo?.compositionObjectBox) ||
+      Boolean(rawInfo?.compositionObjectCenterPoint));
 
-function RotateDirectionIcon({
-  direction,
-  className = 'w-8 h-8'
+  if (isCenterAlignmentStage) {
+    overlays.push({
+      id: 'alignment-center-grid',
+      kind: 'centerAlignmentGuide'
+    });
+  }
+
+  if (rawInfo) {
+    if (isDistanceAlignmentStage && rawInfo.bbox) {
+      overlays.push({
+        id: 'alignment-person-bbox',
+        kind: 'box',
+        tone: 'result',
+        rect: toSourceRect(rawInfo.bbox),
+        strokeWidth: 2
+      });
+      explanationRows.push({ id: 'person-bbox-help', text: '绿色框：当前识别到的人体范围' });
+    }
+
+    if (isHeightAlignmentStage) {
+      overlays.push({
+        id: 'alignment-height-target-range',
+        kind: 'axisBand',
+        axis: 'y',
+        center: 0.5,
+        centerSpace: 'normalized',
+        tolerance: HEIGHT_STAGE_RANGE_HALF_RATIO,
+        toleranceUnit: 'axisRatio',
+        minTolerancePx: 10,
+        tone: 'target',
+        showFill: false,
+        showCenter: false,
+        showBoundaries: true,
+        boundaryDashed: true,
+        strokeWidth: 2
+      });
+      if (rawInfo.heightReferencePoint && sourceSize) {
+        overlays.push({
+          id: 'alignment-height-current-line',
+          kind: 'line',
+          tone: 'result',
+          from: { x: 0, y: rawInfo.heightReferencePoint[1], space: 'source' },
+          to: { x: sourceSize.width, y: rawInfo.heightReferencePoint[1], space: 'source' },
+          strokeWidth: 2
+        });
+      }
+      explanationRows.push(
+        { id: 'height-target-help', text: '红色虚线：以画面中心为基准的定高范围' },
+        { id: 'height-current-help', text: `绿色线：当前人物的${effectiveAlignmentCameraHeight || '--'}位置` }
+      );
+    }
+
+    if (shouldShowCompositionOverlay) {
+      if (rawInfo.targetBox) {
+        overlays.push({
+          id: 'alignment-composition-target-box',
+          kind: 'box',
+          tone: 'target',
+          rect: toSourceRect(rawInfo.targetBox),
+          strokeWidth: 2
+        });
+      }
+      if (rawInfo.compositionObjectBox) {
+        overlays.push({
+          id: 'alignment-composition-object-box',
+          kind: 'box',
+          tone: 'result',
+          rect: toSourceRect(rawInfo.compositionObjectBox),
+          strokeWidth: 2
+        });
+      }
+      if (rawInfo.compositionObjectCenterPoint) {
+        overlays.push({
+          id: 'alignment-composition-object-center',
+          kind: 'point',
+          tone: 'result',
+          point: toSourcePoint(rawInfo.compositionObjectCenterPoint),
+          radius: 6
+        });
+      }
+      explanationRows.push(
+        { id: 'composition-target-help', text: '红色框：构图对象中心点需要到达的位置' },
+        {
+          id: 'composition-object-help',
+          text: `绿色框：构图对象（${rawInfo.compositionObjectName || personCenterPosition}）`
+        },
+        { id: 'composition-center-help', text: '绿色点：构图对象中心点' }
+      );
+    } else if (isCenterAlignmentStage) {
+      if (rawInfo.centerPoint) {
+        overlays.push({
+          id: 'alignment-person-center',
+          kind: 'point',
+          tone: 'result',
+          point: toSourcePoint(rawInfo.centerPoint),
+          radius: 6
+        });
+      }
+      overlays.push(
+        {
+          id: 'alignment-center-target-point',
+          kind: 'point',
+          tone: 'target',
+          point: { x: 0.5, y: 0.5, space: 'normalized' },
+          radius: 6
+        },
+        {
+          id: 'alignment-center-target-radius',
+          kind: 'circle',
+          tone: 'target',
+          center: { x: 0.5, y: 0.5, space: 'normalized' },
+          radius: {
+            value: personCenterPositionOffsetPercent / 100,
+            unit: 'diagonalRatio'
+          },
+          dashed: true,
+          strokeWidth: 2
+        }
+      );
+      explanationRows.push(
+        { id: 'center-person-help', text: `绿色点：人像-${personCenterPosition}的中心点` },
+        {
+          id: 'center-target-help',
+          text: `红色点 + 红色圆：画面中心与居中偏差范围（${personCenterPositionOffsetPercent}%）`
+        }
+      );
+    }
+  }
+
+  const sections: DisplayPanel['sections'] = [
+    {
+      id: 'alignment-summary',
+      rows: [
+        { id: 'algo', label: '当前算法', value: currentAlgoLabel, tone: 'accent' },
+        { id: 'stage', label: '当前算法阶段', value: currentStage || '--', tone: 'accent' },
+        { id: 'ratio', label: '人体占比', value: formatRatio(rawInfo?.ratio) },
+        { id: 'yaw', label: '人脸相对镜头偏移角度', value: formatDegree(rawInfo?.yaw) }
+      ]
+    }
+  ];
+
+  if (explanationRows.length > 0) {
+    sections.push({
+      id: 'alignment-help',
+      title: '画面说明',
+      rows: explanationRows
+    });
+  }
+
+  return {
+    panel: {
+      title: '分析结果和画面说明',
+      sections
+    },
+    overlays,
+    videoPrompts: [],
+    viewportPrompts: []
+  };
+};
+
+const buildImageSearchDisplayModel = (imageSearchInfo: ImageSearchInfo | null): LiveDisplayModel | null => {
+  if (!imageSearchInfo) return null;
+
+  const overlays: DisplayPrimitive[] = [];
+  if (imageSearchInfo.quad) {
+    const p1 = imageSearchInfo.quad.leftTop;
+    const p2 = imageSearchInfo.quad.rightTop;
+    const p3 = imageSearchInfo.quad.rightBottom;
+    const p4 = imageSearchInfo.quad.leftBottom;
+    const focus = getLineIntersection(p1, p3, p2, p4) || imageSearchInfo.targetCenter || null;
+
+    overlays.push(
+      {
+        id: 'image-search-target-polygon',
+        kind: 'polygon',
+        tone: 'result',
+        points: [p1, p2, p3, p4].map(toSourcePoint),
+        strokeWidth: 2
+      },
+      {
+        id: 'image-search-target-diagonal-a',
+        kind: 'line',
+        tone: 'result',
+        from: toSourcePoint(p1),
+        to: toSourcePoint(p3),
+        dashed: true,
+        strokeWidth: 1.5
+      },
+      {
+        id: 'image-search-target-diagonal-b',
+        kind: 'line',
+        tone: 'result',
+        from: toSourcePoint(p2),
+        to: toSourcePoint(p4),
+        dashed: true,
+        strokeWidth: 1.5
+      }
+    );
+    if (focus) {
+      overlays.push({
+        id: 'image-search-target-focus',
+        kind: 'point',
+        tone: 'result',
+        point: toSourcePoint(focus),
+        radius: 5
+      });
+    }
+  }
+
+  return {
+    panel: {
+      title: '分析结果和画面说明',
+      sections: [
+        {
+          id: 'image-search-summary',
+          rows: [
+            {
+              id: 'status-label',
+              label: '定位状态',
+              value: getImageSearchStatusLabel(imageSearchInfo.statusCode)
+            },
+            { id: 'status-code', label: '状态码', value: imageSearchInfo.statusCode ?? '--' },
+            { id: 'matched-points', label: '匹配点', value: imageSearchInfo.matchedPoints ?? '--' },
+            ...(imageSearchInfo.statusMessage
+              ? [{ id: 'status-message', label: '说明', value: imageSearchInfo.statusMessage }]
+              : [])
+          ]
+        }
+      ]
+    },
+    overlays,
+    videoPrompts: [],
+    viewportPrompts: []
+  };
+};
+
+const buildGuideLineDisplayModel = ({
+  currentAlgoLabel,
+  guideLineInfo,
+  visibleGuideLines,
+  hasVisibleSecondaryGuideLines,
+  latestGuideLineOptions,
+  targetGuideLineAngle,
+  currentGuideLineAngle
 }: {
-  direction: 'clockwise' | 'counterclockwise';
-  className?: string;
-}) {
-  return direction === 'clockwise' ? (
-      <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-        <path
-            d="M846.7456 272.3328L808.0384 128l-40.5504 70.2976A405.9648 405.9648 0 0 0 563.2 142.4384a409.6 409.6 0 0 0-173.1584 780.9024 25.6 25.6 0 1 0 21.76-46.1824 358.4 358.4 0 0 1 151.5008-683.3152 355.2768 355.2768 0 0 1 178.7392 48.8448l-39.5264 68.5056z"
-            fill="#46bc4e"
-            opacity=".2"
-        />
-        <path
-            d="M846.7456 246.784l-38.7072-144.3328-40.5504 70.2976A405.9648 405.9648 0 0 0 563.2 116.8896a409.6 409.6 0 0 0-173.1584 780.9024 25.6 25.6 0 1 0 21.76-46.1824 358.4 358.4 0 0 1 151.5008-683.3152 355.2768 355.2768 0 0 1 178.7392 48.8448l-39.5264 68.5056z"
-            fill="#46bc4e"
-        />
-      </svg>
-  ) : (
-      <svg className={className} viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-        <path
-            d="M153.6 272.3328L192.256 128l40.6016 70.2976a405.76 405.76 0 0 1 204.2368-55.8592 409.6 409.6 0 0 1 173.2096 780.9024 25.6 25.6 0 1 1-21.6576-46.3872 358.4 358.4 0 0 0-151.552-683.3152 355.2768 355.2768 0 0 0-178.7392 48.8448l39.5776 68.5056z"
-            fill="#46bc4e"
-            opacity=".2"
-        />
-        <path
-            d="M153.6 246.784l38.656-144.3328 40.6016 70.2976a405.76 405.76 0 0 1 204.2368-55.8592 409.6 409.6 0 0 1 173.2096 780.9024 25.6 25.6 0 1 1-21.6576-46.3872 358.4 358.4 0 0 0-151.552-683.3152 355.2768 355.2768 0 0 0-178.7392 48.8448l39.5776 68.5056z"
-            fill="#46bc4e"
-        />
-      </svg>
-  );
-}
+  currentAlgoLabel: string;
+  guideLineInfo: GuideLineInfo | null;
+  visibleGuideLines: GuideLineInfo['guideLines'];
+  hasVisibleSecondaryGuideLines: boolean;
+  latestGuideLineOptions: {
+    proEnabled: boolean;
+    showOtherLines: boolean;
+    alignmentOrientation: GuideLineAlignmentOrientation;
+    alignmentPosition: number;
+    alignmentPositionToleranceRatio: number;
+  };
+  targetGuideLineAngle?: number;
+  currentGuideLineAngle?: number;
+}): LiveDisplayModel | null => {
+  if (!guideLineInfo) return null;
+
+  const overlays: DisplayPrimitive[] = [];
+  const explanationRows: DisplayPanel['sections'][number]['rows'] = [];
+
+  if (latestGuideLineOptions.proEnabled) {
+    overlays.push({
+      id: 'guide-line-target-band',
+      kind: 'axisBand',
+      axis: latestGuideLineOptions.alignmentOrientation === 'vertical' ? 'x' : 'y',
+      center: latestGuideLineOptions.alignmentPosition,
+      centerSpace: 'normalized',
+      tolerance: latestGuideLineOptions.alignmentPositionToleranceRatio,
+      toleranceUnit: 'diagonalRatio',
+      tone: 'target',
+      showFill: true,
+      showCenter: true,
+      showBoundaries: true,
+      boundaryDashed: true,
+      fillOpacity: 0.18,
+      strokeWidth: 2
+    });
+    explanationRows.push(
+      { id: 'guide-line-target-help', text: '红色实线：引导线目标位置' },
+      { id: 'guide-line-tolerance-help', text: '红色虚线：允许偏差范围' }
+    );
+  }
+
+  if (guideLineInfo.trackerRegion && guideLineInfo.trackerRegion.available !== false) {
+    const trackerRegion = guideLineInfo.trackerRegion;
+    const rect = trackerRegion.bboxNorm
+      ? toNormalizedRect(trackerRegion.bboxNorm)
+      : trackerRegion.bbox
+        ? toSourceRect(trackerRegion.bbox)
+        : null;
+    if (rect) {
+      overlays.push({
+        id: 'guide-line-tracker-region',
+        kind: 'box',
+        tone: 'result',
+        rect,
+        sourceSize: guideLineInfo.frameSize,
+        dashed: true,
+        strokeWidth: 2.5
+      });
+      explanationRows.push({ id: 'guide-line-tracker-help', text: '绿色虚线框：追踪模块识别区域' });
+    }
+  }
+
+  visibleGuideLines.forEach((guideLine, index) => {
+    const normalizedPoints = guideLine.pointsNorm;
+    const sourcePoints = guideLine.points;
+    const points = normalizedPoints || sourcePoints;
+    if (!points) return;
+    const selected =
+      guideLine.isAlignmentLine === true ||
+      guideLine.id === guideLineInfo.selectedGuideLineId;
+    overlays.push({
+      id: `guide-line-${guideLine.id}-${index}`,
+      kind: 'line',
+      tone: selected ? 'result' : 'secondary',
+      from: normalizedPoints ? toNormalizedPoint(points[0]) : toSourcePoint(points[0]),
+      to: normalizedPoints ? toNormalizedPoint(points[1]) : toSourcePoint(points[1]),
+      sourceSize: guideLineInfo.frameSize,
+      showEndpoints: true,
+      label: `L${guideLine.id}`,
+      strokeWidth: 3
+    });
+  });
+
+  if (visibleGuideLines.length > 0) {
+    explanationRows.push({ id: 'guide-line-main-help', text: '绿色线 / 绿色圆点：对准线' });
+  }
+  if (
+    latestGuideLineOptions.proEnabled &&
+    latestGuideLineOptions.showOtherLines &&
+    hasVisibleSecondaryGuideLines
+  ) {
+    explanationRows.push({ id: 'guide-line-secondary-help', text: '蓝色线 / 蓝色圆点：其他引导线' });
+  }
+
+  const summaryRows: DisplayPanel['sections'][number]['rows'] = [
+    { id: 'algo', label: '当前算法', value: currentAlgoLabel, tone: 'accent' },
+    { id: 'status-code', label: '状态码', value: guideLineInfo.statusCode ?? '--' },
+    {
+      id: 'line-count',
+      label: '识别线数',
+      value: guideLineInfo.lineCount ?? guideLineInfo.guideLines.length
+    }
+  ];
+  if (latestGuideLineOptions.proEnabled && !latestGuideLineOptions.showOtherLines) {
+    summaryRows.push({
+      id: 'visible-line-count',
+      label: '当前展示线数',
+      value: visibleGuideLines.length
+    });
+  }
+  summaryRows.push({
+    id: 'angles',
+    label: '目标角度 / 当前角度',
+    value: `${formatGuideDegree(targetGuideLineAngle)} / ${formatGuideDegree(currentGuideLineAngle)}`
+  });
+  if (guideLineInfo.resultUrl) {
+    summaryRows.push({
+      id: 'result-url',
+      label: '结果图',
+      href: guideLineInfo.resultUrl,
+      hrefLabel: '查看结果'
+    });
+  }
+
+  return {
+    panel: {
+      title: '分析结果和画面说明',
+      sections: [
+        {
+          id: 'guide-line-summary',
+          rows: summaryRows
+        },
+        ...(explanationRows.length > 0
+          ? [
+              {
+                id: 'guide-line-help',
+                title: '画面说明',
+                rows: explanationRows,
+                subtle: true
+              }
+            ]
+          : [])
+      ]
+    },
+    overlays,
+    videoPrompts: [],
+    viewportPrompts: []
+  };
+};
 
 const parseShotRatioCellBounds = (value: string): { ratioMin: string; ratioMax: string } | null => {
   const normalized = value.trim().replace(/\s+/g, '');
@@ -876,7 +1144,7 @@ function LivePusher() {
 
   const [wsStatus, setWsStatus] = useState('未连接');
   const [messages, setMessages] = useState<string[]>([]);
-  const [isConsoleExpanded, setIsConsoleExpanded] = useState(true);
+  const [isConsoleExpanded, setIsConsoleExpanded] = useState(false);
   const [isAnalysisPanelExpanded, setIsAnalysisPanelExpanded] = useState(true);
   const [notifyMessage, setNotifyMessage] = useState('');
   const [activeMode, setActiveMode] = useState<ActiveMode>(null);
@@ -927,29 +1195,9 @@ function LivePusher() {
   const [renderAspect, setRenderAspect] = useState<string | null>(null);
   const [sourceSize, setSourceSize] = useState<{ width: number; height: number } | null>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
-  const [rawInfo, setRawInfo] = useState<{
-    ratio?: number;
-    bbox?: [number, number, number, number];
-    centerPoint?: [number, number];
-    heightReferencePoint?: [number, number];
-    targetBox?: [number, number, number, number];
-    compositionObjectBox?: [number, number, number, number];
-    compositionObjectCenterPoint?: [number, number];
-    compositionObjectName?: string;
-    yaw?: number;
-  } | null>(null);
-  const [imageSearchInfo, setImageSearchInfo] = useState<{
-    statusCode?: number;
-    statusMessage?: string;
-    matchedPoints?: number;
-    quad?: {
-      leftTop: [number, number];
-      rightTop: [number, number];
-      rightBottom: [number, number];
-      leftBottom: [number, number];
-    };
-    targetCenter?: [number, number];
-  } | null>(null);
+  const [rawInfo, setRawInfo] = useState<AlignmentRawInfo | null>(null);
+  const [imageSearchInfo, setImageSearchInfo] = useState<ImageSearchInfo | null>(null);
+  const [serverDisplay, setServerDisplay] = useState<LiveDisplayModel | null>(null);
   const [currentAlgoType, setCurrentAlgoType] = useState<AlgoType | null>(null);
   const [taskOffNotice, setTaskOffNotice] = useState(false);
   const taskOffTimerRef = useRef<number | null>(null);
@@ -1003,14 +1251,6 @@ function LivePusher() {
       window.requestAnimationFrame(apply);
       window.setTimeout(apply, 0);
   };
-  const hasAlignmentAnalysis =
-      Boolean(rawInfo?.bbox) ||
-      Boolean(rawInfo?.centerPoint) ||
-      Boolean(rawInfo?.targetBox) ||
-      Boolean(rawInfo?.compositionObjectBox) ||
-      Boolean(rawInfo?.compositionObjectCenterPoint) ||
-      rawInfo?.ratio !== undefined ||
-      rawInfo?.yaw !== undefined;
   const effectiveAlignmentCameraHeight =
       selectedAlignmentTemplate ? stripOptionCode(selectedAlignmentTemplate.value.cameraHeight) : '';
   const isActiveAlignmentRun =
@@ -1026,24 +1266,6 @@ function LivePusher() {
   const isCenterAlignmentStage =
       isActiveAlignmentRun &&
       (currentStage === '中心点对准' || (currentStageCode ? /center/i.test(currentStageCode) : false));
-  const shouldShowAnalysisPanel =
-      (isActiveAlignmentRun &&
-        (Boolean(currentStage) || hasAlignmentAnalysis)) ||
-      (activeMode === 'image_search' &&
-        currentAlgoType === 'upload_template' &&
-        Boolean(imageSearchInfo)) ||
-      (activeMode === 'guide_line' &&
-        currentAlgoType === 'guide_line' &&
-        Boolean(guideLineInfo));
-  const shouldShowCenterAlignmentGuide = isCenterAlignmentStage;
-  const shouldShowHeightRangeGuide = isHeightAlignmentStage;
-  const shouldShowPersonBoundingBox = isDistanceAlignmentStage;
-  const shouldShowCenterPointMarkers = isCenterAlignmentStage;
-  const shouldShowCompositionOverlay =
-      shouldShowCenterPointMarkers &&
-      (Boolean(rawInfo?.targetBox) ||
-        Boolean(rawInfo?.compositionObjectBox) ||
-        Boolean(rawInfo?.compositionObjectCenterPoint));
   const visibleGuideLines = guideLineInfo?.guideLines.filter(line =>
       !latestGuideLineOptions.proEnabled ||
       latestGuideLineOptions.showOtherLines ||
@@ -1065,51 +1287,120 @@ function LivePusher() {
       guideLineInfo?.currentAngleDeg ??
       getGuideLineSegmentAngleDeg(selectedGuideLine);
   const isDroneControl = controlDevice === 'drone';
-  const movementSuggestions: Array<{ key: string; label: string; icon: JSX.Element }> = [];
+  const movementSuggestions: DisplayPrompt[] = [];
   if (moveGuide?.pitch !== undefined && moveGuide.pitch !== 0) {
     movementSuggestions.push({
-      key: 'pitch',
-      label: moveGuide.pitch > 0 ? '向前' : '向后',
-      icon: <VerticalDirectionIcon direction={moveGuide.pitch > 0 ? 'up' : 'down'} />
+      id: 'pitch',
+      text: moveGuide.pitch > 0 ? '向前' : '向后',
+      placement: 'video-bottom',
+      tone: 'instruction',
+      icon: { kind: 'vertical', direction: moveGuide.pitch > 0 ? 'up' : 'down' }
     });
   }
   if (moveGuide?.roll !== undefined && moveGuide.roll !== 0) {
     movementSuggestions.push({
-      key: 'roll',
-      label: moveGuide.roll > 0 ? '向右' : '向左',
-      icon: <HorizontalDirectionIcon direction={moveGuide.roll > 0 ? 'right' : 'left'} />
+      id: 'roll',
+      text: moveGuide.roll > 0 ? '向右' : '向左',
+      placement: 'video-bottom',
+      tone: 'instruction',
+      icon: { kind: 'horizontal', direction: moveGuide.roll > 0 ? 'right' : 'left' }
     });
   }
   if (moveGuide?.yaw !== undefined && moveGuide.yaw !== 0) {
     movementSuggestions.push({
-      key: 'yaw',
-      label: moveGuide.yaw > 0 ? '顺时针转' : '逆时针转',
-      icon: <RotateDirectionIcon direction={moveGuide.yaw > 0 ? 'clockwise' : 'counterclockwise'} />
+      id: 'yaw',
+      text: moveGuide.yaw > 0 ? '顺时针转' : '逆时针转',
+      placement: 'video-bottom',
+      tone: 'instruction',
+      icon: { kind: 'rotate', direction: moveGuide.yaw > 0 ? 'clockwise' : 'counterclockwise' }
     });
   }
   if (moveGuide?.throttle !== undefined && moveGuide.throttle !== 0) {
     movementSuggestions.push({
-      key: 'throttle',
-      label: moveGuide.throttle > 0 ? '向上' : '向下',
-      icon: <VerticalDirectionIcon direction={moveGuide.throttle > 0 ? 'up' : 'down'} />
+      id: 'throttle',
+      text: moveGuide.throttle > 0 ? '向上' : '向下',
+      placement: 'video-bottom',
+      tone: 'instruction',
+      icon: { kind: 'vertical', direction: moveGuide.throttle > 0 ? 'up' : 'down' }
     });
   }
-  const gimbalSuggestions: Array<{ key: string; label: string; icon: JSX.Element }> = [];
+  const gimbalSuggestions: DisplayPrompt[] = [];
   if (gimbalGuide?.vertical !== undefined && gimbalGuide.vertical !== 0) {
     gimbalSuggestions.push({
-      key: 'gimbal-vertical',
-      label: gimbalGuide.vertical > 0 ? '云台调整-上' : '云台调整-下',
-      icon: <VerticalDirectionIcon direction={gimbalGuide.vertical > 0 ? 'up' : 'down'} />
+      id: 'gimbal-vertical',
+      text: gimbalGuide.vertical > 0 ? '云台调整-上' : '云台调整-下',
+      placement: 'video-bottom',
+      tone: 'instruction',
+      icon: { kind: 'vertical', direction: gimbalGuide.vertical > 0 ? 'up' : 'down' }
     });
   }
   if (gimbalGuide?.horizontal !== undefined && gimbalGuide.horizontal !== 0) {
     gimbalSuggestions.push({
-      key: 'gimbal-horizontal',
-      label: gimbalGuide.horizontal > 0 ? '云台调整-右' : '云台调整-左',
-      icon: <HorizontalDirectionIcon direction={gimbalGuide.horizontal > 0 ? 'right' : 'left'} />
+      id: 'gimbal-horizontal',
+      text: gimbalGuide.horizontal > 0 ? '云台调整-右' : '云台调整-左',
+      placement: 'video-bottom',
+      tone: 'instruction',
+      icon: { kind: 'horizontal', direction: gimbalGuide.horizontal > 0 ? 'right' : 'left' }
     });
   }
   const controlSuggestions = [...movementSuggestions, ...gimbalSuggestions];
+  const localAlgorithmDisplay =
+      currentAlgoType === 'alignment_person'
+          ? buildAlignmentDisplayModel({
+            currentAlgoLabel,
+            currentStage,
+            isActiveAlignmentRun,
+            isHeightAlignmentStage,
+            isDistanceAlignmentStage,
+            isCenterAlignmentStage,
+            rawInfo,
+            sourceSize,
+            effectiveAlignmentCameraHeight,
+            personCenterPosition,
+            personCenterPositionOffsetPercent
+          })
+          : activeMode === 'image_search' && currentAlgoType === 'upload_template'
+            ? buildImageSearchDisplayModel(imageSearchInfo)
+            : activeMode === 'guide_line' && currentAlgoType === 'guide_line'
+              ? buildGuideLineDisplayModel({
+                currentAlgoLabel,
+                guideLineInfo,
+                visibleGuideLines,
+                hasVisibleSecondaryGuideLines,
+                latestGuideLineOptions,
+                targetGuideLineAngle,
+                currentGuideLineAngle
+              })
+              : null;
+  const algorithmDisplay = serverDisplay || localAlgorithmDisplay || createEmptyDisplayModel();
+  const displayModel: LiveDisplayModel = {
+    sourceSize: algorithmDisplay.sourceSize,
+    panel: algorithmDisplay.panel,
+    overlays: algorithmDisplay.overlays,
+    videoPrompts: [
+      ...algorithmDisplay.videoPrompts,
+      ...controlSuggestions,
+      ...(activeMode === 'alignment_person' && taskOffNotice
+        ? [{
+            id: 'alignment-task-started',
+            text: '算法启动成功，开始识别中',
+            placement: 'video-center' as const,
+            tone: 'success' as const
+          }]
+        : [])
+    ],
+    viewportPrompts: [
+      ...algorithmDisplay.viewportPrompts,
+      ...(notifyMessage
+        ? [{
+            id: 'notify',
+            text: notifyMessage,
+            placement: 'viewport-center' as const,
+            tone: 'toast' as const
+          }]
+        : [])
+    ]
+  };
 
   const pusherRef = useRef<any>(null);
   const deviceManagerRef = useRef<any>(null);
@@ -1194,6 +1485,7 @@ function LivePusher() {
           if (parsed?.type === 'notify' && typeof parsed?.message === 'string') {
             showNotify(parsed.message);
           }
+          const nextDisplay = normalizeLiveDisplayPayload(parsed?.display);
           const incomingAlgoType: AlgoType | null =
               normalizeAlgoType(parsed?.algoType) ||
               normalizeAlgoType(parsed?.raw?.algoType) ||
@@ -1205,6 +1497,7 @@ function LivePusher() {
             setRawInfo(null);
             setImageSearchInfo(null);
             setGuideLineInfo(null);
+            setServerDisplay(null);
             setMoveGuide(null);
             setGimbalGuide(null);
             setTaskOffNotice(false);
@@ -1212,6 +1505,9 @@ function LivePusher() {
             setCurrentStageCode('');
             alignmentRunCompletedRef.current = false;
             setAlignmentRunCompleted(false);
+          }
+          if (nextDisplay) {
+            setServerDisplay(nextDisplay);
           }
           if (incomingAlgoType) {
             currentAlgoTypeRef.current = incomingAlgoType;
@@ -1239,6 +1535,7 @@ function LivePusher() {
           if (isAlignmentDoneMessage) {
             setRawInfo(null);
             setImageSearchInfo(null);
+            setServerDisplay(null);
             setMoveGuide(null);
             setGimbalGuide(null);
             setCurrentStage('');
@@ -1694,6 +1991,7 @@ function LivePusher() {
   }, [activeMode]);
 
   useEffect(() => {
+    setServerDisplay(null);
     if (activeMode === 'alignment_person') return;
     setCurrentStage('');
     setCurrentStageCode('');
@@ -1986,6 +2284,7 @@ function LivePusher() {
 
   const handleUploadTemplate = () => {
     setImageSearchInfo(null);
+    setServerDisplay(null);
     fileInputRef.current?.click();
   };
 
@@ -2003,6 +2302,7 @@ function LivePusher() {
   const handleSubmitGuideLine = async () => {
     setGuideLineError('');
     setGuideLineInfo(null);
+    setServerDisplay(null);
     try {
       const requestBody: GuideLinePayload = {
         type: 'guide_line',
@@ -2198,6 +2498,7 @@ function LivePusher() {
     setAlignmentError('');
     // 重新提交任务时清空画面提示
     setRawInfo(null);
+    setServerDisplay(null);
     setMoveGuide(null);
     setGimbalGuide(null);
     setTaskOffNotice(false);
@@ -2475,6 +2776,7 @@ function LivePusher() {
     setStreamStatus('未连接');
     setRenderAspect(null);
     setActiveMode(null);
+    setServerDisplay(null);
 
     // ⭐ 防止残留 DOM
     resetRenderView();
@@ -2500,13 +2802,7 @@ function LivePusher() {
 
   return (
       <div className="min-h-screen bg-slate-900 px-4 pb-8 pt-4 sm:px-6 lg:pb-10 lg:pt-6">
-        {notifyMessage && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-              <div className="max-w-[80vw] rounded-xl bg-black/75 px-6 py-3 text-lg font-semibold text-white">
-                {notifyMessage}
-              </div>
-            </div>
-        )}
+        <DisplayPromptLayer prompts={displayModel.viewportPrompts} placement="viewport-center" />
         <div className="mx-auto max-w-4xl space-y-6">
           <h1 className="text-center text-[1.75rem] font-bold tracking-[0.08em] text-white sm:text-[1.9rem]">Meya</h1>
 
@@ -2543,654 +2839,24 @@ function LivePusher() {
                     }}
                 />
             )}
-            {shouldShowAnalysisPanel && (
-                <div className="absolute right-3 top-3 z-20 max-w-[min(78vw,320px)] text-xs text-white">
-                  <div className="rounded-xl bg-black/60 backdrop-blur-md shadow-[0_8px_24px_rgba(15,23,42,0.28)]">
-                    <button
-                        type="button"
-                        onClick={() => setIsAnalysisPanelExpanded(prev => !prev)}
-                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
-                    >
-                      <span className="font-medium">分析结果和画面说明</span>
-                      {isAnalysisPanelExpanded ? (
-                          <ChevronUp className="h-4 w-4 shrink-0" />
-                      ) : (
-                          <ChevronDown className="h-4 w-4 shrink-0" />
-                      )}
-                    </button>
-                    {isAnalysisPanelExpanded && (
-                        <div className="space-y-2 border-t border-white/10 px-3 pb-3 pt-2">
-                          {currentAlgoType === 'alignment_person' && (
-                              <>
-                                <div className="rounded bg-black/35 px-2 py-1">
-                                  当前算法：
-                                  <span className="ml-1 font-medium text-sky-200">{currentAlgoLabel}</span>
-                                </div>
-                                <div className="rounded bg-black/35 px-2 py-1">
-                                  当前算法阶段：
-                                  <span className="ml-1 font-medium text-sky-200">{currentStage || '--'}</span>
-                                </div>
-                                <div className="rounded bg-black/35 px-2 py-1">
-                                  人体占比：
-                                  {rawInfo?.ratio !== undefined
-                                      ? `${(rawInfo.ratio * 100).toFixed(2)}%`
-                                      : '--'}
-                                  <span className="ml-2">
-                                    人脸相对镜头偏移角度：
-                                    {rawInfo?.yaw !== undefined
-                                        ? `${rawInfo.yaw.toFixed(2)}°`
-                                        : '--'}
-                                  </span>
-                                </div>
-                                {shouldShowPersonBoundingBox ? (
-                                  <div className="rounded bg-black/35 px-2 py-1 space-y-1">
-                                    <div className="font-medium">画面说明</div>
-                                    <div>绿色框：当前识别到的人体范围</div>
-                                  </div>
-                                ) : null}
-                                {shouldShowHeightRangeGuide ? (
-                                  <div className="rounded bg-black/35 px-2 py-1 space-y-1">
-                                    <div className="font-medium">画面说明</div>
-                                    <div>红色虚线：以画面中心为基准的定高范围</div>
-                                    <div>绿色线：当前人物的{effectiveAlignmentCameraHeight || '--'}位置</div>
-                                  </div>
-                                ) : null}
-                                {shouldShowCenterPointMarkers ? (
-                                  <div className="rounded bg-black/35 px-2 py-1 space-y-1">
-                                    <div className="font-medium">画面说明</div>
-                                    {shouldShowCompositionOverlay ? (
-                                      <>
-                                        <div>红色框：构图对象中心点需要到达的位置</div>
-                                        <div>绿色框：构图对象（{rawInfo?.compositionObjectName || personCenterPosition}）</div>
-                                        <div>绿色点：构图对象中心点</div>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <div>绿色点：人像-{personCenterPosition}的中心点</div>
-                                        <div>红色点 + 红色圆：画面中心与居中偏差范围（{personCenterPositionOffsetPercent}%）</div>
-                                      </>
-                                    )}
-                                  </div>
-                                ) : null}
-                              </>
-                          )}
-                          {currentAlgoType === 'upload_template' && imageSearchInfo && (
-                              <div className="rounded bg-black/35 px-2 py-1 space-y-1">
-                                <div>
-                                  定位状态：
-                                  {imageSearchInfo.statusCode === 201
-                                      ? '发现目标'
-                                      : imageSearchInfo.statusCode === 202
-                                          ? '定位成功'
-                                          : imageSearchInfo.statusCode === 203
-                                              ? '未发现目标'
-                                              : '--'}
-                                </div>
-                                <div>状态码：{imageSearchInfo.statusCode ?? '--'}</div>
-                                <div>匹配点：{imageSearchInfo.matchedPoints ?? '--'}</div>
-                                {imageSearchInfo.statusMessage && <div>说明：{imageSearchInfo.statusMessage}</div>}
-                              </div>
-                          )}
-                          {currentAlgoType === 'guide_line' && guideLineInfo && (
-                              <div className="rounded bg-black/35 px-2 py-1 space-y-1">
-                                <div className="rounded bg-black/20 px-2 py-1">
-                                  当前算法：
-                                  <span className="ml-1 font-medium text-sky-200">{currentAlgoLabel}</span>
-                                </div>
-                                <div>状态码：{guideLineInfo.statusCode ?? '--'}</div>
-                                <div>识别线数：{guideLineInfo.lineCount ?? guideLineInfo.guideLines.length}</div>
-                                {latestGuideLineOptions.proEnabled && !latestGuideLineOptions.showOtherLines && (
-                                    <div>当前展示线数：{visibleGuideLines.length}</div>
-                                )}
-                                <div>
-                                  目标角度 / 当前角度：
-                                  {targetGuideLineAngle !== undefined
-                                      ? `${targetGuideLineAngle.toFixed(1)}°`
-                                      : '--'}
-                                  {' / '}
-                                  {currentGuideLineAngle !== undefined
-                                      ? `${currentGuideLineAngle.toFixed(1)}°`
-                                      : '--'}
-                                </div>
-                                {guideLineInfo.resultUrl && (
-                                    <div className="break-all">
-                                      结果图：
-                                      <a
-                                          href={guideLineInfo.resultUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="ml-1 text-sky-200 underline"
-                                      >
-                                        查看结果
-                                      </a>
-                                    </div>
-                                )}
-                                {(visibleGuideLines.length > 0 ||
-                                  latestGuideLineOptions.proEnabled ||
-                                  (guideLineInfo.trackerRegion && guideLineInfo.trackerRegion.available !== false)) && (
-                                    <div className="rounded bg-black/20 px-2 py-1 space-y-1">
-                                      <div className="font-medium">画面说明</div>
-                                      {latestGuideLineOptions.proEnabled && (
-                                          <>
-                                            <div>红色实线：引导线目标位置</div>
-                                            <div>红色虚线：允许偏差范围</div>
-                                          </>
-                                      )}
-                                      {visibleGuideLines.length > 0 && (
-                                          <div>绿色线 / 绿色圆点：对准线</div>
-                                      )}
-                                      {latestGuideLineOptions.proEnabled && latestGuideLineOptions.showOtherLines && hasVisibleSecondaryGuideLines && (
-                                          <div>蓝色线 / 蓝色圆点：其他引导线</div>
-                                      )}
-                                      {guideLineInfo.trackerRegion && guideLineInfo.trackerRegion.available !== false && (
-                                          <div>绿色虚线框：追踪模块识别区域</div>
-                                      )}
-                                    </div>
-                                )}
-                              </div>
-                          )}
-                        </div>
-                    )}
-                  </div>
-                </div>
-            )}
-
-            {shouldShowCenterAlignmentGuide && <CenterAlignmentGuideOverlay />}
-
-            {(currentAlgoType === 'alignment_person') &&
-                hasAlignmentAnalysis &&
-                sourceSize &&
-                containerSize && (
-                <div className="absolute inset-0 pointer-events-none">
-                  {(() => {
-                    const scaleX = containerSize.width / sourceSize.width;
-                    const scaleY = containerSize.height / sourceSize.height;
-                    return (
-                        <>
-                          {shouldShowPersonBoundingBox && rawInfo.bbox && (() => {
-                            const [originX, originY, boxWidth, boxHeight] = rawInfo.bbox!;
-                            const left = originX * scaleX;
-                            const top = originY * scaleY;
-                            const width = boxWidth * scaleX;
-                            const height = boxHeight * scaleY;
-                            return (
-                                <div
-                                    className="absolute border-2"
-                                    style={{
-                                      borderColor: ALGO_RESULT_COLOR,
-                                      left,
-                                      top,
-                                      width,
-                                      height
-                                    }}
-                                />
-                            );
-                          })()}
-                          {shouldShowHeightRangeGuide && (() => {
-                            const centerY = containerSize.height / 2;
-                            const bandHalfHeight = Math.max(
-                                containerSize.height * HEIGHT_STAGE_RANGE_HALF_RATIO,
-                                10
-                            );
-                            const topLineY = Math.max(centerY - bandHalfHeight, 0);
-                            const bottomLineY = Math.min(
-                                centerY + bandHalfHeight,
-                                containerSize.height
-                            );
-                            return (
-                                <>
-                                  <div
-                                      className="absolute left-0 right-0 border-t-2 border-dashed"
-                                      style={{
-                                        top: topLineY,
-                                        borderColor: ALGO_TARGET_COLOR_SOFT
-                                      }}
-                                  />
-                                  <div
-                                      className="absolute left-0 right-0 border-t-2 border-dashed"
-                                      style={{
-                                        top: bottomLineY,
-                                        borderColor: ALGO_TARGET_COLOR_SOFT
-                                      }}
-                                  />
-                                  {rawInfo.heightReferencePoint ? (
-                                      <div
-                                          className="absolute left-0 right-0 border-t-2"
-                                          style={{
-                                            top: rawInfo.heightReferencePoint[1] * scaleY,
-                                            borderColor: ALGO_RESULT_COLOR_SOFT
-                                          }}
-                                      />
-                                  ) : null}
-                                </>
-                            );
-                          })()}
-                          {shouldShowCompositionOverlay && rawInfo.targetBox && (() => {
-                            const [originX, originY, boxWidth, boxHeight] = rawInfo.targetBox!;
-                            const left = originX * scaleX;
-                            const top = originY * scaleY;
-                            const width = boxWidth * scaleX;
-                            const height = boxHeight * scaleY;
-                            return (
-                                <div
-                                    className="absolute border-2"
-                                    style={{
-                                      borderColor: ALGO_TARGET_COLOR_SOFT,
-                                      left,
-                                      top,
-                                      width,
-                                      height
-                                    }}
-                                />
-                            );
-                          })()}
-                          {shouldShowCompositionOverlay && rawInfo.compositionObjectBox && (() => {
-                            const [originX, originY, boxWidth, boxHeight] = rawInfo.compositionObjectBox!;
-                            const left = originX * scaleX;
-                            const top = originY * scaleY;
-                            const width = boxWidth * scaleX;
-                            const height = boxHeight * scaleY;
-                            return (
-                                <div
-                                    className="absolute border-2"
-                                    style={{
-                                      borderColor: ALGO_RESULT_COLOR,
-                                      left,
-                                      top,
-                                      width,
-                                      height
-                                    }}
-                                />
-                            );
-                          })()}
-                          {shouldShowCompositionOverlay && rawInfo.compositionObjectCenterPoint && (() => {
-                            const [cx, cy] = rawInfo.compositionObjectCenterPoint!;
-                            const left = cx * scaleX;
-                            const top = cy * scaleY;
-                            return (
-                                <div
-                                    className="absolute h-3 w-3 rounded-full -translate-x-1/2 -translate-y-1/2"
-                                    style={{
-                                      backgroundColor: ALGO_RESULT_COLOR,
-                                      left,
-                                      top
-                                    }}
-                                />
-                            );
-                          })()}
-                          {shouldShowCenterPointMarkers && !shouldShowCompositionOverlay && rawInfo.centerPoint && (() => {
-                            const [cx, cy] = rawInfo.centerPoint!;
-                            const left = cx * scaleX;
-                            const top = cy * scaleY;
-                            return (
-                                <div
-                                    className="absolute h-3 w-3 rounded-full -translate-x-1/2 -translate-y-1/2"
-                                    style={{
-                                      backgroundColor: ALGO_RESULT_COLOR,
-                                      left,
-                                      top
-                                    }}
-                                />
-                            );
-                          })()}
-                          {shouldShowCenterPointMarkers && !shouldShowCompositionOverlay && (() => {
-                            const centerX = containerSize.width / 2;
-                            const centerY = containerSize.height / 2;
-                            const diag = Math.hypot(
-                                containerSize.width,
-                                containerSize.height
-                            );
-                            const offsetLen =
-                                (diag * personCenterPositionOffsetPercent) / 100;
-                            const boxSize = offsetLen * 2;
-                            return (
-                                <>
-                                  <div
-                                      className="absolute h-3 w-3 rounded-full -translate-x-1/2 -translate-y-1/2"
-                                      style={{
-                                        backgroundColor: ALGO_TARGET_COLOR_WEAK,
-                                        left: centerX,
-                                        top: centerY
-                                      }}
-                                  />
-                                  <div
-                                      className="absolute rounded-full border-2 border-dashed"
-                                      style={{
-                                        borderColor: ALGO_TARGET_COLOR_FAINT,
-                                        left: centerX - boxSize / 2,
-                                        top: centerY - boxSize / 2,
-                                        width: boxSize,
-                                        height: boxSize
-                                      }}
-                                  />
-                                </>
-                            );
-                          })()}
-                        </>
-                    );
-                  })()}
-                </div>
-            )}
-
-            {(currentAlgoType === 'upload_template') &&
-                imageSearchInfo &&
-                sourceSize &&
-                containerSize && (
-                <div className="absolute inset-0 pointer-events-none">
-                  {imageSearchInfo.quad && (() => {
-                    const scaleX = containerSize.width / sourceSize.width;
-                    const scaleY = containerSize.height / sourceSize.height;
-                    const clamp = (v: number, min: number, max: number) =>
-                        Math.max(min, Math.min(max, v));
-                    const mapPoint = (p: [number, number]): [number, number] => [
-                      clamp(p[0] * scaleX, 0, containerSize.width),
-                      clamp(p[1] * scaleY, 0, containerSize.height)
-                    ];
-                    const p1 = mapPoint(imageSearchInfo.quad!.leftTop);
-                    const p2 = mapPoint(imageSearchInfo.quad!.rightTop);
-                    const p3 = mapPoint(imageSearchInfo.quad!.rightBottom);
-                    const p4 = mapPoint(imageSearchInfo.quad!.leftBottom);
-                    const lineIntersection = (
-                        a: [number, number],
-                        b: [number, number],
-                        c: [number, number],
-                        d: [number, number]
-                    ): [number, number] | null => {
-                      const x1 = a[0], y1 = a[1];
-                      const x2 = b[0], y2 = b[1];
-                      const x3 = c[0], y3 = c[1];
-                      const x4 = d[0], y4 = d[1];
-                      const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-                      if (Math.abs(den) < 1e-6) return null;
-                      const px =
-                          ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / den;
-                      const py =
-                          ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / den;
-                      return [
-                        clamp(px, 0, containerSize.width),
-                        clamp(py, 0, containerSize.height)
-                      ];
-                    };
-                    const focus =
-                        lineIntersection(p1, p3, p2, p4) ||
-                        (imageSearchInfo.targetCenter
-                            ? mapPoint(imageSearchInfo.targetCenter)
-                            : null);
-
-                    return (
-                        <svg
-                            className="absolute inset-0 w-full h-full"
-                            viewBox={`0 0 ${containerSize.width} ${containerSize.height}`}
-                        >
-                          <polygon
-                              points={`${p1[0]},${p1[1]} ${p2[0]},${p2[1]} ${p3[0]},${p3[1]} ${p4[0]},${p4[1]}`}
-                              fill="none"
-                              stroke={ALGO_RESULT_COLOR}
-                              strokeWidth="2"
-                          />
-                          <line x1={p1[0]} y1={p1[1]} x2={p3[0]} y2={p3[1]} stroke={ALGO_RESULT_COLOR} strokeWidth="1.5" strokeDasharray="6 4" />
-                          <line x1={p2[0]} y1={p2[1]} x2={p4[0]} y2={p4[1]} stroke={ALGO_RESULT_COLOR} strokeWidth="1.5" strokeDasharray="6 4" />
-                          {focus && <circle cx={focus[0]} cy={focus[1]} r="5" fill={ALGO_RESULT_COLOR} />}
-                        </svg>
-                    );
-                  })()}
-                </div>
-            )}
-
-            {(currentAlgoType === 'guide_line') &&
-                guideLineInfo &&
-                containerSize &&
-                (visibleGuideLines.length > 0 ||
-                  latestGuideLineOptions.proEnabled ||
-                  (guideLineInfo.trackerRegion && guideLineInfo.trackerRegion.available !== false)) && (
-                <div className="absolute inset-0 pointer-events-none">
-                  {(() => {
-                    const clamp = (value: number, min: number, max: number) =>
-                        Math.max(min, Math.min(max, value));
-                    const mapTrackerRegionBox = (
-                      trackerRegion?: GuideLineInfo['trackerRegion']
-                    ): [number, number, number, number] | null => {
-                      if (!trackerRegion || trackerRegion.available === false) return null;
-                      const bboxNorm = trackerRegion.bboxNorm;
-                      if (bboxNorm) {
-                        const left = clamp(bboxNorm[0] * containerSize.width, 0, containerSize.width);
-                        const top = clamp(bboxNorm[1] * containerSize.height, 0, containerSize.height);
-                        const width = clamp(bboxNorm[2] * containerSize.width, 0, containerSize.width - left);
-                        const height = clamp(bboxNorm[3] * containerSize.height, 0, containerSize.height - top);
-                        return width > 0 && height > 0 ? [left, top, width, height] : null;
-                      }
-
-                      const bbox = trackerRegion.bbox;
-                      const widthBase = guideLineInfo.frameSize?.width || sourceSize?.width;
-                      const heightBase = guideLineInfo.frameSize?.height || sourceSize?.height;
-                      if (!bbox || !widthBase || !heightBase) return null;
-                      const left = clamp((bbox[0] / widthBase) * containerSize.width, 0, containerSize.width);
-                      const top = clamp((bbox[1] / heightBase) * containerSize.height, 0, containerSize.height);
-                      const width = clamp((bbox[2] / widthBase) * containerSize.width, 0, containerSize.width - left);
-                      const height = clamp((bbox[3] / heightBase) * containerSize.height, 0, containerSize.height - top);
-                      return width > 0 && height > 0 ? [left, top, width, height] : null;
-                    };
-                    const trackerRegionBox = mapTrackerRegionBox(guideLineInfo.trackerRegion);
-                    const targetPosition = clamp(latestGuideLineOptions.alignmentPosition, 0, 1);
-                    const targetTolerance = Math.sqrt(
-                      containerSize.width ** 2 + containerSize.height ** 2
-                    ) * latestGuideLineOptions.alignmentPositionToleranceRatio;
-                    const isVerticalTarget = latestGuideLineOptions.alignmentOrientation === 'vertical';
-                    const targetAxisPosition = isVerticalTarget
-                      ? targetPosition * containerSize.width
-                      : targetPosition * containerSize.height;
-                    const targetRangeStart = clamp(
-                      targetAxisPosition - targetTolerance,
-                      0,
-                      isVerticalTarget ? containerSize.width : containerSize.height
-                    );
-                    const targetRangeEnd = clamp(
-                      targetAxisPosition + targetTolerance,
-                      0,
-                      isVerticalTarget ? containerSize.width : containerSize.height
-                    );
-
-                    return (
-                      <svg
-                          className="absolute inset-0 h-full w-full"
-                          viewBox={`0 0 ${containerSize.width} ${containerSize.height}`}
-                      >
-                        {latestGuideLineOptions.proEnabled && (
-                            isVerticalTarget ? (
-                                <>
-                                  <rect
-                                      x={targetRangeStart}
-                                      y="0"
-                                      width={targetRangeEnd - targetRangeStart}
-                                      height={containerSize.height}
-                                      fill={ALGO_TARGET_COLOR_FAINT}
-                                      opacity="0.18"
-                                  />
-                                  <line
-                                      x1={targetAxisPosition}
-                                      y1="0"
-                                      x2={targetAxisPosition}
-                                      y2={containerSize.height}
-                                      stroke={ALGO_TARGET_COLOR}
-                                      strokeWidth="3"
-                                      vectorEffect="non-scaling-stroke"
-                                  />
-                                  <line
-                                      x1={targetRangeStart}
-                                      y1="0"
-                                      x2={targetRangeStart}
-                                      y2={containerSize.height}
-                                      stroke={ALGO_TARGET_COLOR}
-                                      strokeWidth="2"
-                                      strokeDasharray="8 6"
-                                      vectorEffect="non-scaling-stroke"
-                                  />
-                                  <line
-                                      x1={targetRangeEnd}
-                                      y1="0"
-                                      x2={targetRangeEnd}
-                                      y2={containerSize.height}
-                                      stroke={ALGO_TARGET_COLOR}
-                                      strokeWidth="2"
-                                      strokeDasharray="8 6"
-                                      vectorEffect="non-scaling-stroke"
-                                  />
-                                </>
-                            ) : (
-                                <>
-                                  <rect
-                                      x="0"
-                                      y={targetRangeStart}
-                                      width={containerSize.width}
-                                      height={targetRangeEnd - targetRangeStart}
-                                      fill={ALGO_TARGET_COLOR_FAINT}
-                                      opacity="0.18"
-                                  />
-                                  <line
-                                      x1="0"
-                                      y1={targetAxisPosition}
-                                      x2={containerSize.width}
-                                      y2={targetAxisPosition}
-                                      stroke={ALGO_TARGET_COLOR}
-                                      strokeWidth="3"
-                                      vectorEffect="non-scaling-stroke"
-                                  />
-                                  <line
-                                      x1="0"
-                                      y1={targetRangeStart}
-                                      x2={containerSize.width}
-                                      y2={targetRangeStart}
-                                      stroke={ALGO_TARGET_COLOR}
-                                      strokeWidth="2"
-                                      strokeDasharray="8 6"
-                                      vectorEffect="non-scaling-stroke"
-                                  />
-                                  <line
-                                      x1="0"
-                                      y1={targetRangeEnd}
-                                      x2={containerSize.width}
-                                      y2={targetRangeEnd}
-                                      stroke={ALGO_TARGET_COLOR}
-                                      strokeWidth="2"
-                                      strokeDasharray="8 6"
-                                      vectorEffect="non-scaling-stroke"
-                                  />
-                                </>
-                            )
-                        )}
-                        {trackerRegionBox && (
-                            <rect
-                                x={trackerRegionBox[0]}
-                                y={trackerRegionBox[1]}
-                                width={trackerRegionBox[2]}
-                                height={trackerRegionBox[3]}
-                                fill="none"
-                                stroke={ALGO_RESULT_COLOR}
-                                strokeWidth="2.5"
-                                strokeDasharray="8 6"
-                                vectorEffect="non-scaling-stroke"
-                            />
-                        )}
-                        {visibleGuideLines.map((guideLine, index) => {
-                          const mapPoint = (
-                            point?: [number, number],
-                            normalizedPoint?: [number, number]
-                          ): [number, number] | null => {
-                            if (normalizedPoint) {
-                              return [
-                                clamp(normalizedPoint[0] * containerSize.width, 0, containerSize.width),
-                                clamp(normalizedPoint[1] * containerSize.height, 0, containerSize.height)
-                              ];
-                            }
-
-                            const widthBase = guideLineInfo.frameSize?.width || sourceSize?.width;
-                            const heightBase = guideLineInfo.frameSize?.height || sourceSize?.height;
-                            if (!point || !widthBase || !heightBase) return null;
-                            return [
-                              clamp((point[0] / widthBase) * containerSize.width, 0, containerSize.width),
-                              clamp((point[1] / heightBase) * containerSize.height, 0, containerSize.height)
-                            ];
-                          };
-
-                          const start = mapPoint(
-                            guideLine.points?.[0],
-                            guideLine.pointsNorm?.[0]
-                          );
-                          const end = mapPoint(
-                            guideLine.points?.[1],
-                            guideLine.pointsNorm?.[1]
-                          );
-                          if (!start || !end) return null;
-                          const guideLineColor =
-                            guideLine.isAlignmentLine === true ||
-                            guideLine.id === guideLineInfo.selectedGuideLineId
-                              ? ALGO_RESULT_COLOR
-                              : ALGO_RESULT_SECONDARY_LINE_COLOR;
-
-                          return (
-                              <g key={`${guideLine.id}-${index}`}>
-                                <line
-                                    x1={start[0]}
-                                    y1={start[1]}
-                                    x2={end[0]}
-                                    y2={end[1]}
-                                    stroke={guideLineColor}
-                                    strokeWidth="3"
-                                    strokeLinecap="round"
-                                />
-                                <circle cx={start[0]} cy={start[1]} r="4" fill={guideLineColor} />
-                                <circle cx={end[0]} cy={end[1]} r="4" fill={guideLineColor} />
-                                <text
-                                    x={start[0] + 8}
-                                    y={start[1] - 8}
-                                    fontSize="12"
-                                    fontWeight="600"
-                                    fill={ALGO_RESULT_LABEL_COLOR}
-                                    paintOrder="stroke"
-                                    stroke="rgba(15,23,42,0.92)"
-                                    strokeWidth="1.2"
-                                >
-                                  L{guideLine.id}
-                                </text>
-                              </g>
-                          );
-                        })}
-                      </svg>
-                    );
-                  })()}
-                </div>
-            )}
+            <AnalysisDisplayPanel
+                panel={displayModel.panel}
+                expanded={isAnalysisPanelExpanded}
+                onToggle={() => setIsAnalysisPanelExpanded(prev => !prev)}
+            />
+            <DisplayOverlayLayer
+                overlays={displayModel.overlays}
+                containerSize={containerSize}
+                sourceSize={displayModel.sourceSize || sourceSize}
+            />
             {!isStreaming && (
                 <div className="absolute inset-0 flex items-center justify-center text-slate-500">
                   <Video className="w-14 h-14" />
                 </div>
             )}
 
-            {controlSuggestions.length > 0 && (
-                <div className="absolute inset-0 pointer-events-none text-white">
-                  <div className="absolute inset-x-0 bottom-[12%] flex justify-center px-4 sm:bottom-[10%]">
-                    <div className="flex max-w-full flex-wrap items-center justify-center gap-3">
-                      {controlSuggestions.map(item => (
-                          <div
-                              key={item.key}
-                              className="flex min-w-[120px] items-center justify-center gap-2 rounded-xl bg-black/60 px-3 py-2 text-sm text-white shadow-[0_8px_24px_rgba(15,23,42,0.28)] backdrop-blur-md sm:min-w-[132px]"
-                          >
-                            {item.icon}
-                            <span className="whitespace-nowrap">{item.label}</span>
-                          </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-            )}
-
-            {activeMode === 'alignment_person' && taskOffNotice && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="text-3xl md:text-4xl font-bold text-emerald-400 bg-black/60 px-6 py-3 rounded-xl">
-                    算法启动成功，开始识别中
-                  </div>
-                </div>
-            )}
+            <DisplayPromptLayer prompts={displayModel.videoPrompts} placement="video-bottom" />
+            <DisplayPromptLayer prompts={displayModel.videoPrompts} placement="video-center" />
 
             <button
                 type="button"
