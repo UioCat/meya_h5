@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useRef, useState } from 'react';
-import { ImagePlus, Loader2, RefreshCw, Sparkles, Trash2, UploadCloud, X } from 'lucide-react';
+import { Check, Copy, ImagePlus, Loader2, RefreshCw, Sparkles, Trash2, UploadCloud, X } from 'lucide-react';
 
 type PhotoLibraryProps = {
   notify?: (message: string) => void;
@@ -24,9 +24,28 @@ type GuideLineLlmResult = {
   imageDataUrl: string;
   lineCount?: number;
   selectedIds: number[];
+  selectedOptionIds: number[];
+  selectedConstructionIds: number[];
+  selectedGuideLineIds: number[];
+  constructionOptions: SelectionOption[];
+  selectionOptions: SelectionOption[];
+  convergePointOptions: SelectionOption[];
+  selectedConvergePoints: Array<Record<string, unknown>>;
+  selectedMlsdPoints: Array<Record<string, unknown>>;
+  includeConstructionLines?: boolean;
+  includeConvergePoints?: boolean;
+  includeMlsd?: boolean;
   statusCode?: number;
   statusMessage?: string;
   llm?: Record<string, unknown>;
+};
+
+type SelectionOption = {
+  id: number;
+  source?: string;
+  type?: string;
+  label?: string;
+  guideLineId?: number;
 };
 
 type PreparedPhotoUpload = {
@@ -64,6 +83,31 @@ const summarizeResponseText = (text: string) => {
 
 const getErrorMessage = (error: unknown, fallback: string) =>
   error instanceof Error && error.message ? error.message : fallback;
+
+const translateStatusMessage = (message: string) => {
+  const normalized = message.trim();
+  if (normalized === 'llm selected candidate(s); selected candidates marked green and other candidates marked blue') {
+    return 'LLM 已选择候选项；选中候选已标绿';
+  }
+  return message;
+};
+
+const copyTextToClipboard = async (text: string) => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+};
 
 const normalizePhotoValue = (
   value: unknown,
@@ -123,6 +167,22 @@ const isRawKvItem = (item: unknown): item is { key: string; value: unknown; upda
 const getObjectValue = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' ? value as Record<string, unknown> : null;
 
+const getMessageObject = (value: unknown): Record<string, unknown> | null => {
+  const objectValue = getObjectValue(value);
+  if (objectValue) return objectValue;
+  return typeof value === 'string' ? getObjectValue(parseJsonSafely(value)) : null;
+};
+
+const resolveGuideLineLiteResultPayload = (value: unknown): Record<string, unknown> | null => {
+  const root = getMessageObject(value);
+  const raw = getMessageObject(root?.raw);
+  const data = getMessageObject(root?.data);
+  const rawData = getMessageObject(raw?.data);
+  const dataRaw = getMessageObject(data?.raw);
+  const candidates = [root, raw, data, rawData, dataRaw];
+  return candidates.find(candidate => candidate?.type === 'guide_line_lite_result') || null;
+};
+
 const normalizeNumberArray = (value: unknown): number[] => {
   const rawItems = Array.isArray(value) ? value : [];
   const indexes = rawItems
@@ -132,42 +192,165 @@ const normalizeNumberArray = (value: unknown): number[] => {
       const obj = getObjectValue(item);
       if (typeof obj?.id === 'number') return obj.id;
       if (typeof obj?.index === 'number') return obj.index;
+      if (typeof obj?.selectionId === 'number') return obj.selectionId;
+      if (typeof obj?.constructionId === 'number') return obj.constructionId;
+      if (typeof obj?.guideLineId === 'number') return obj.guideLineId;
       return NaN;
     })
     .filter(index => Number.isInteger(index) && index >= 0);
   return Array.from(new Set(indexes));
 };
 
+const normalizePointArray = (value: unknown): Array<Record<string, unknown>> => {
+  if (!Array.isArray(value)) return [];
+  return value.reduce<Array<Record<string, unknown>>>((points, item) => {
+    if (typeof item === 'number' || typeof item === 'string') {
+      const selectionId = Number(item);
+      if (Number.isInteger(selectionId) && selectionId >= 0) {
+        points.push({ selectionId });
+      }
+      return points;
+    }
+
+    const obj = getObjectValue(item);
+    if (obj) points.push(obj);
+    return points;
+  }, []);
+};
+
+const normalizeSelectionOptions = (value: unknown): SelectionOption[] => {
+  if (!Array.isArray(value)) return [];
+  return value.reduce<SelectionOption[]>((options, item) => {
+    const obj = getObjectValue(item);
+    const rawId = obj?.id ?? obj?.selectionId ?? obj?.constructionId ?? obj?.guideLineId;
+    const id = typeof rawId === 'number' ? rawId : typeof rawId === 'string' ? Number(rawId) : NaN;
+    if (!Number.isInteger(id) || id < 0) return options;
+
+    const rawGuideLineId = obj?.guideLineId ?? obj?.constructionId;
+    const guideLineId =
+      typeof rawGuideLineId === 'number'
+        ? rawGuideLineId
+        : typeof rawGuideLineId === 'string'
+          ? Number(rawGuideLineId)
+          : undefined;
+    const option: SelectionOption = { id };
+    if (typeof obj?.source === 'string') option.source = obj.source;
+    if (typeof obj?.type === 'string') option.type = obj.type;
+    if (typeof obj?.label === 'string') option.label = obj.label;
+    if (typeof guideLineId === 'number' && Number.isInteger(guideLineId) && guideLineId >= 0) {
+      option.guideLineId = guideLineId;
+    }
+
+    options.push(option);
+    return options;
+  }, []);
+};
+
+const formatSelectionId = (id: number, options: SelectionOption[]) => {
+  if (options.length === 0) return `L${id}`;
+  const option = options.find(item => item.id === id);
+  if (option?.source === 'mlsd' || option?.type === 'converge_point' || option?.type === 'convergence_point') {
+    return `P${id} 汇聚点`;
+  }
+  if (typeof option?.guideLineId === 'number') return `#${id}/L${option.guideLineId}`;
+  return `#${id}`;
+};
+
+const formatSelectedIds = (ids: number[], options: SelectionOption[]) =>
+  ids.length > 0 ? ids.map(id => formatSelectionId(id, options)).join('、') : '--';
+
+const formatConstructionIds = (ids: number[]) =>
+  ids.length > 0 ? ids.map(id => `L${id}`).join('、') : '--';
+
+const getPointDisplayId = (point: Record<string, unknown>) => {
+  const rawId = point.selectionId ?? point.id ?? point.pointId ?? point.index;
+  if (typeof rawId === 'number' || typeof rawId === 'string') return String(rawId);
+  return '--';
+};
+
+const formatConvergePoints = (points: Array<Record<string, unknown>>) =>
+  points.length > 0 ? points.map(point => `P${getPointDisplayId(point)}`).join('、') : '--';
+
 const parseGuideLineLiteResult = (value: unknown): GuideLineLlmResult => {
   const root = getObjectValue(value);
   const data = getObjectValue(root?.data) || root;
   if (!data) {
-    throw new Error('引导线-Lite 返回内容格式不正确');
+    throw new Error('点线构图Lite 返回内容格式不正确');
   }
 
-  const imageDataUrl = typeof data.imageDataUrl === 'string' && data.imageDataUrl
-    ? data.imageDataUrl
-    : typeof data.imageBase64 === 'string' && data.imageBase64
-      ? `data:${typeof data.imageContentType === 'string' ? data.imageContentType : 'image/jpeg'};base64,${getImageBase64Payload(data.imageBase64)}`
-      : '';
+  const imageDataUrl = typeof data.imageDataUrl === 'string' && data.imageDataUrl ? data.imageDataUrl : '';
 
   if (!imageDataUrl) {
-    throw new Error('引导线-Lite 未返回结果图片');
+    throw new Error('点线构图Lite 未返回结果图片');
   }
 
   const llm = getObjectValue(data.llm) || undefined;
-  const selectedIds = normalizeNumberArray(data.selectedIds).length > 0
-    ? normalizeNumberArray(data.selectedIds)
-    : normalizeNumberArray(llm?.selectedIds);
+  const selectionOptions = normalizeSelectionOptions(data.selectionOptions);
+  const explicitConstructionOptions = normalizeSelectionOptions(data.constructionOptions);
+  const explicitConvergePointOptions = normalizeSelectionOptions(data.convergePointOptions);
+  const constructionOptions = explicitConstructionOptions.length > 0
+    ? explicitConstructionOptions
+    : selectionOptions.filter(option => option.source === 'guide_line' || option.type === 'construction_line');
+  const convergePointOptions = explicitConvergePointOptions.length > 0
+    ? explicitConvergePointOptions
+    : selectionOptions.filter(option =>
+        option.source === 'mlsd' || option.type === 'converge_point' || option.type === 'convergence_point'
+      );
+  const selectedOptionIds = normalizeNumberArray(data.selectedOptionIds).length > 0
+    ? normalizeNumberArray(data.selectedOptionIds)
+    : normalizeNumberArray(data.selectedIds).length > 0
+      ? normalizeNumberArray(data.selectedIds)
+      : normalizeNumberArray(llm?.selectedIds);
+  const explicitSelectedConstructionIds = normalizeNumberArray(data.selectedConstructionIds).length > 0
+    ? normalizeNumberArray(data.selectedConstructionIds)
+    : normalizeNumberArray(llm?.selectedConstructionIds);
+  const explicitSelectedGuideLineIds = normalizeNumberArray(data.selectedGuideLineIds);
+  const selectedConstructionIds = explicitSelectedConstructionIds.length > 0
+    ? explicitSelectedConstructionIds
+    : explicitSelectedGuideLineIds.length > 0
+      ? explicitSelectedGuideLineIds
+      : selectionOptions.length > 0
+        ? selectedOptionIds
+            .map(optionId => selectionOptions.find(option => option.id === optionId))
+            .filter((option): option is SelectionOption => option?.source === 'guide_line' || option?.type === 'construction_line')
+            .map(option => option.guideLineId ?? option.id)
+        : selectedOptionIds;
+  const selectedGuideLineIds = selectedConstructionIds;
   const guideLines = Array.isArray(data.guideLines) ? data.guideLines : [];
+  const explicitSelectedConvergePoints = normalizePointArray(data.selectedConvergePoints);
+  const selectedConvergePointAlias = normalizePointArray(data.selectConvergePoints);
+  const llmSelectedConvergePoints = normalizePointArray(llm?.selectedConvergePoints);
+  const llmSelectConvergePoints = normalizePointArray(llm?.selectConvergePoints);
+  const selectedConvergePoints =
+    explicitSelectedConvergePoints.length > 0
+      ? explicitSelectedConvergePoints
+      : selectedConvergePointAlias.length > 0
+        ? selectedConvergePointAlias
+        : llmSelectedConvergePoints.length > 0
+          ? llmSelectedConvergePoints
+          : llmSelectConvergePoints.length > 0
+            ? llmSelectConvergePoints
+            : normalizePointArray(data.selectedMlsdPoints);
+  const selectedMlsdPoints = selectedConvergePoints;
 
   return {
     taskId: typeof data.taskId === 'string' ? data.taskId : undefined,
     imageDataUrl,
-    lineCount: typeof data.lineCount === 'number' ? data.lineCount : guideLines.length || undefined,
-    selectedIds,
+    lineCount: typeof data.lineCount === 'number' ? data.lineCount : constructionOptions.length || guideLines.length || undefined,
+    selectedIds: selectedOptionIds,
+    selectedOptionIds,
+    selectedConstructionIds,
+    selectedGuideLineIds,
+    constructionOptions,
+    selectionOptions,
+    convergePointOptions,
+    selectedConvergePoints,
+    selectedMlsdPoints,
+    includeConstructionLines: typeof data.includeConstructionLines === 'boolean' ? data.includeConstructionLines : undefined,
+    includeConvergePoints: typeof data.includeConvergePoints === 'boolean' ? data.includeConvergePoints : undefined,
+    includeMlsd: typeof data.includeMlsd === 'boolean' ? data.includeMlsd : undefined,
     statusCode: typeof data.statusCode === 'number' ? data.statusCode : undefined,
-    statusMessage: typeof data.statusMessage === 'string' ? data.statusMessage : undefined,
+    statusMessage: typeof data.statusMessage === 'string' ? translateStatusMessage(data.statusMessage) : undefined,
     llm
   };
 };
@@ -330,9 +513,12 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
   const [error, setError] = useState('');
   const [isAlgorithmModalOpen, setIsAlgorithmModalOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
+  const [includeConstructionLines, setIncludeConstructionLines] = useState(true);
+  const [includeConvergePoints, setIncludeConvergePoints] = useState(true);
   const [algorithmSubmitting, setAlgorithmSubmitting] = useState(false);
   const [algorithmError, setAlgorithmError] = useState('');
   const [algorithmResult, setAlgorithmResult] = useState<GuideLineLlmResult | null>(null);
+  const [llmCopied, setLlmCopied] = useState(false);
 
   const selectedPhoto = items.find(item => item.key === selectedKey) || items[0] || null;
   const canUpload = items.length < MAX_PHOTO_COUNT;
@@ -356,14 +542,7 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
     ws.onmessage = event => {
       if (typeof event.data !== 'string') return;
       const parsed = parseJsonSafely(event.data);
-      const root = getObjectValue(parsed);
-      const raw = getObjectValue(root?.raw);
-      const resultPayload =
-        root?.type === 'guide_line_lite_result'
-          ? root
-          : raw?.type === 'guide_line_lite_result'
-            ? raw
-            : null;
+      const resultPayload = resolveGuideLineLiteResultPayload(parsed);
       if (!resultPayload) return;
 
       const taskId = typeof resultPayload.taskId === 'string' ? resultPayload.taskId : '';
@@ -371,6 +550,7 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
 
       try {
         setAlgorithmResult(parseGuideLineLiteResult(resultPayload));
+        setLlmCopied(false);
         setAlgorithmError('');
         setIsAlgorithmModalOpen(false);
         setAlgorithmSubmitting(false);
@@ -379,9 +559,9 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
           window.clearTimeout(resultTimeoutRef.current);
           resultTimeoutRef.current = null;
         }
-        notifyRef.current?.('引导线-LLM 分析完成');
+        notifyRef.current?.('点线构图-LLM 分析完成');
       } catch (err) {
-        setAlgorithmError(getErrorMessage(err, '解析引导线-Lite 结果失败'));
+        setAlgorithmError(getErrorMessage(err, '解析点线构图Lite 结果失败'));
         setAlgorithmSubmitting(false);
       }
     };
@@ -527,6 +707,7 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
   const handleSelectPhoto = (key: string) => {
     setSelectedKey(key);
     setAlgorithmResult(null);
+    setLlmCopied(false);
     setAlgorithmError('');
   };
 
@@ -536,6 +717,8 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
       return;
     }
     setAlgorithmError('');
+    setIncludeConstructionLines(true);
+    setIncludeConvergePoints(true);
     setIsAlgorithmModalOpen(true);
   };
 
@@ -548,7 +731,13 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
       setAlgorithmError('请填写 Prompt');
       return;
     }
+    if (!includeConstructionLines && !includeConvergePoints) {
+      setAlgorithmError('请至少选择传递结构线或传递汇聚点');
+      return;
+    }
 
+    setAlgorithmResult(null);
+    setLlmCopied(false);
     setAlgorithmSubmitting(true);
     setAlgorithmError('');
     try {
@@ -560,19 +749,22 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          type: 'guide_line_lite',
+          type: '点线构图Lite',
           taskId,
           prompt: prompt.trim(),
+          includeConstructionLines,
+          includeConvergePoints,
+          includeMlsd: includeConvergePoints,
           imageBase64: getImageBase64Payload(selectedPhoto.value.data)
         })
       });
       const text = await response.text();
       if (!response.ok) {
-        throw new Error(summarizeResponseText(text) || `引导线-Lite 请求失败（HTTP ${response.status}）`);
+        throw new Error(summarizeResponseText(text) || `点线构图Lite 请求失败（HTTP ${response.status}）`);
       }
 
       setIsAlgorithmModalOpen(false);
-      notify?.('已提交引导线-LLM，等待结果');
+      notify?.('已提交点线构图-LLM，等待结果');
       if (resultTimeoutRef.current) {
         window.clearTimeout(resultTimeoutRef.current);
       }
@@ -585,7 +777,19 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
     } catch (err) {
       pendingTaskIdRef.current = '';
       setAlgorithmSubmitting(false);
-      setAlgorithmError(getErrorMessage(err, '引导线-LLM 分析失败'));
+      setAlgorithmError(getErrorMessage(err, '点线构图-LLM 分析失败'));
+    }
+  };
+
+  const handleCopyLlmResult = async () => {
+    if (!algorithmResult?.llm) return;
+    try {
+      await copyTextToClipboard(JSON.stringify(algorithmResult.llm, null, 2));
+      setLlmCopied(true);
+      window.setTimeout(() => setLlmCopied(false), 1600);
+      notify?.('LLM 结果已复制');
+    } catch (err) {
+      notify?.(getErrorMessage(err, '复制失败'));
     }
   };
 
@@ -687,7 +891,7 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
                   className="flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-700"
                 >
                   {algorithmSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  {algorithmSubmitting ? '等待结果' : '引导线-LLM'}
+                  {algorithmSubmitting ? '等待结果' : '点线构图-LLM'}
                 </button>
                 <button
                   type="button"
@@ -714,8 +918,9 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
             <div className="text-sm text-slate-300">算法结果</div>
             {algorithmResult && (
               <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-slate-400">
-                {typeof algorithmResult.lineCount === 'number' && <span>候选线：{algorithmResult.lineCount} 条</span>}
-                <span>LLM 选中：{algorithmResult.selectedIds.length > 0 ? algorithmResult.selectedIds.map(index => `L${index}`).join('、') : '--'}</span>
+                {typeof algorithmResult.lineCount === 'number' && <span>候选结构线：{algorithmResult.lineCount} 条</span>}
+                <span>LLM 选中结构线：{formatConstructionIds(algorithmResult.selectedConstructionIds)}</span>
+                <span>LLM 选中汇聚点：{formatConvergePoints(algorithmResult.selectedConvergePoints)}</span>
               </div>
             )}
           </div>
@@ -745,7 +950,7 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
                         {algorithmSubmitting ? '等待算法结果' : '暂无算法结果'}
                       </div>
                       <div className="mt-1 text-xs text-slate-400">
-                        {algorithmSubmitting ? '任务已提交，正在等待 WebSocket 返回' : '点击“引导线-LLM”后在这里查看标注结果'}
+                        {algorithmSubmitting ? '任务已提交，正在等待 WebSocket 返回' : '点击“点线构图-LLM”后在这里查看标注结果'}
                       </div>
                     </div>
                   </>
@@ -756,8 +961,12 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div>状态：{algorithmResult.statusCode ?? '--'}</div>
                     <div>任务：{algorithmResult.taskId || '--'}</div>
-                    <div>候选线：{algorithmResult.lineCount ?? '--'}</div>
-                    <div>选中线：{algorithmResult.selectedIds.length > 0 ? algorithmResult.selectedIds.map(index => `L${index}`).join('、') : '--'}</div>
+                    <div>候选结构线：{algorithmResult.constructionOptions.length || algorithmResult.lineCount || '--'}</div>
+                    <div>候选汇聚点：{algorithmResult.convergePointOptions.length || '--'}</div>
+                    <div>选中结构线：{formatConstructionIds(algorithmResult.selectedConstructionIds)}</div>
+                    <div>选中汇聚点：{formatConvergePoints(algorithmResult.selectedConvergePoints)}</div>
+                    <div>候选项：{algorithmResult.selectionOptions.length || algorithmResult.lineCount || '--'}</div>
+                    <div>兼容编号：{formatSelectedIds(algorithmResult.selectedOptionIds, algorithmResult.selectionOptions)}</div>
                   </div>
                   {algorithmResult.statusMessage && (
                     <div className="mt-2 border-t border-slate-800 pt-2 text-slate-400">
@@ -765,9 +974,25 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
                     </div>
                   )}
                   {algorithmResult.llm && (
-                    <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-[11px] leading-relaxed text-slate-300">
-                      {JSON.stringify(algorithmResult.llm, null, 2)}
-                    </pre>
+                    <div className="mt-2 overflow-hidden rounded-lg bg-slate-950">
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
+                        <span className="text-[11px] text-slate-500">LLM JSON</span>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyLlmResult()}
+                          className="flex h-7 items-center gap-1 rounded bg-slate-800 px-2 text-[11px] text-slate-200 transition hover:bg-slate-700"
+                          aria-label="复制 LLM 结果"
+                        >
+                          {llmCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                          {llmCopied ? '已复制' : '复制'}
+                        </button>
+                      </div>
+                      <textarea
+                        readOnly
+                        value={JSON.stringify(algorithmResult.llm, null, 2)}
+                        className="h-44 min-h-28 w-full resize-y border-0 bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-300 outline-none"
+                      />
+                    </div>
                   )}
                 </div>
               )}
@@ -817,7 +1042,7 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
           <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-slate-800 p-4 shadow-[0_24px_80px_rgba(0,0,0,0.45)] sm:p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <div className="text-lg font-semibold text-white">引导线-LLM</div>
+                <div className="text-lg font-semibold text-white">点线构图-LLM</div>
                 <div className="mt-1 text-xs text-slate-400">提交 Prompt 和当前图片，由后端 Lite 流程返回标注结果。</div>
               </div>
               <button
@@ -842,8 +1067,56 @@ function PhotoLibrary({ notify }: PhotoLibraryProps) {
                   disabled={algorithmSubmitting}
                   rows={6}
                   className="w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400 disabled:cursor-not-allowed disabled:text-slate-500"
-                  placeholder="描述希望 LLM 选择哪些引导线，例如：请选择最适合作为桌面边缘的线。"
+                  placeholder="示例：场景=室内办公；目标=选择最适合作为桌沿或透视汇聚参考的结构线/汇聚点；优先级=稳定桌沿结构线优先，若结构线不稳定则选择汇聚点；排除=画面边缘、物体纹理、主体遮挡严重；只返回 JSON selectedConstructionIds 和 selectConvergePoints。"
                 />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 py-3">
+                <span>
+                  <span className="block text-sm text-slate-200">传递结构线</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">开启后，结构线候选会交给 LLM。</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={includeConstructionLines}
+                  onChange={event => setIncludeConstructionLines(event.target.checked)}
+                  disabled={algorithmSubmitting}
+                  className="sr-only"
+                />
+                <span
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${
+                    includeConstructionLines ? 'bg-emerald-500' : 'bg-slate-700'
+                  } ${algorithmSubmitting ? 'opacity-50' : ''}`}
+                >
+                  <span
+                    className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition ${
+                      includeConstructionLines ? 'translate-x-5' : ''
+                    }`}
+                  />
+                </span>
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 py-3">
+                <span>
+                  <span className="block text-sm text-slate-200">传递汇聚点</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">开启后，汇聚点候选会交给 LLM。</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={includeConvergePoints}
+                  onChange={event => setIncludeConvergePoints(event.target.checked)}
+                  disabled={algorithmSubmitting}
+                  className="sr-only"
+                />
+                <span
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${
+                    includeConvergePoints ? 'bg-emerald-500' : 'bg-slate-700'
+                  } ${algorithmSubmitting ? 'opacity-50' : ''}`}
+                >
+                  <span
+                    className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition ${
+                      includeConvergePoints ? 'translate-x-5' : ''
+                    }`}
+                  />
+                </span>
               </label>
             </div>
 

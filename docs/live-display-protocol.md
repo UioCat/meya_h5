@@ -83,7 +83,7 @@
 
 - `polygon`：四边形或多边形，字段为 `points: DisplayPoint[]`
 - `circle`：圆形范围，字段为 `center` 和 `radius`
-- `axisBand`：横向/纵向目标线和容忍范围，适合引导线、定高范围
+- `axisBand`：横向/纵向目标线和容忍范围，适合点线构图、定高范围
 - `centerAlignmentGuide`：前端内置的中心构图网格
 
 `tone` 统一语义：`result` 绿色识别结果，`target` 红色目标/容忍范围，`secondary` 蓝色次要结果，`info` 浅蓝信息。

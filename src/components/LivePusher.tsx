@@ -15,6 +15,7 @@ import {
   type DisplayPoint,
   type DisplayPrimitive,
   type DisplayPrompt,
+  type DisplayPromptIcon,
   type DisplayRect,
   type LiveDisplayModel
 } from './LiveDisplay';
@@ -103,7 +104,7 @@ const normalizeAlgoType = (value: unknown): AlgoType | null => {
   if (value === 'upload_template' || value === 'alignment_person' || value === 'guide_line') {
     return value;
   }
-  if (value === 'IBVS_ALGO' || value === 'ibvs_algo') {
+  if (value === 'IBVS_ALGO') {
     return 'alignment_person';
   }
   if (value === 'guideline' || value === 'guide_line_detect') {
@@ -165,6 +166,74 @@ type ImageSearchInfo = {
   };
   targetCenter?: [number, number];
 };
+
+type ControlPromptChannel =
+  | 'move-pitch'
+  | 'move-roll'
+  | 'move-yaw'
+  | 'move-throttle'
+  | 'gimbal-horizontal'
+  | 'gimbal-vertical';
+
+type ControlPromptMap = Partial<Record<ControlPromptChannel, DisplayPrompt>>;
+
+const CONTROL_PROMPT_TTL_MS = 3000;
+const CONTROL_PROMPT_CHANNELS: ControlPromptChannel[] = [
+  'move-yaw',
+  'move-roll',
+  'move-pitch',
+  'move-throttle',
+  'gimbal-horizontal',
+  'gimbal-vertical'
+];
+
+const createControlPrompt = (
+  id: string,
+  text: string,
+  icon: DisplayPromptIcon
+): DisplayPrompt => ({
+  id,
+  text,
+  placement: 'video-bottom',
+  tone: 'instruction',
+  icon
+});
+
+const createMovePitchPrompt = (value: number) =>
+  createControlPrompt('control-move-pitch', value > 0 ? '向前' : '向后', {
+    kind: 'vertical',
+    direction: value > 0 ? 'up' : 'down'
+  });
+
+const createMoveRollPrompt = (value: number) =>
+  createControlPrompt('control-move-roll', value > 0 ? '右移' : '左移', {
+    kind: 'horizontal',
+    direction: value > 0 ? 'right' : 'left'
+  });
+
+const createMoveYawPrompt = (value: number) =>
+  createControlPrompt('control-move-yaw', value > 0 ? '右转' : '左转', {
+    kind: 'rotate',
+    direction: value > 0 ? 'clockwise' : 'counterclockwise'
+  });
+
+const createMoveThrottlePrompt = (value: number) =>
+  createControlPrompt('control-move-throttle', value > 0 ? '向上' : '向下', {
+    kind: 'vertical',
+    direction: value > 0 ? 'up' : 'down'
+  });
+
+const createGimbalHorizontalPrompt = (value: number) =>
+  createControlPrompt('control-gimbal-horizontal', value > 0 ? '云台右转' : '云台左转', {
+    kind: 'horizontal',
+    direction: value > 0 ? 'right' : 'left'
+  });
+
+const createGimbalVerticalPrompt = (value: number) =>
+  createControlPrompt('control-gimbal-vertical', value > 0 ? '云台上' : '云台下', {
+    kind: 'vertical',
+    direction: value > 0 ? 'up' : 'down'
+  });
 
 const parseGuideLineSegmentPoints = (
   value: unknown
@@ -802,7 +871,7 @@ const buildGuideLineDisplayModel = ({
       strokeWidth: 2
     });
     explanationRows.push(
-      { id: 'guide-line-target-help', text: '红色实线：引导线目标位置' },
+      { id: 'guide-line-target-help', text: '红色实线：点线构图目标位置' },
       { id: 'guide-line-tolerance-help', text: '红色虚线：允许偏差范围' }
     );
   }
@@ -857,7 +926,7 @@ const buildGuideLineDisplayModel = ({
     latestGuideLineOptions.showOtherLines &&
     hasVisibleSecondaryGuideLines
   ) {
-    explanationRows.push({ id: 'guide-line-secondary-help', text: '蓝色线 / 蓝色圆点：其他引导线' });
+    explanationRows.push({ id: 'guide-line-secondary-help', text: '蓝色线 / 蓝色圆点：其他点线构图' });
   }
 
   const summaryRows: DisplayPanel['sections'][number]['rows'] = [
@@ -981,6 +1050,7 @@ type GuideLineAlignmentOrientation = 'horizontal' | 'vertical';
 type GuideLinePayload = {
   type: 'guide_line';
   streamUrl: string;
+  guideLineVersion?: 'pro';
   proEnabled?: boolean;
   showOtherLines?: boolean;
   alignmentOrientation?: GuideLineAlignmentOrientation;
@@ -1169,7 +1239,6 @@ function LivePusher() {
   const [alignmentError, setAlignmentError] = useState('');
   const [alignmentIbvsMode, setAlignmentIbvsMode] = useState(false);
   const [guideLineForm, setGuideLineForm] = useState({
-    proEnabled: true,
     showOtherLines: true,
     alignmentOrientation: 'horizontal' as GuideLineAlignmentOrientation,
     alignmentPosition: '0.5',
@@ -1186,16 +1255,7 @@ function LivePusher() {
   });
   const [guideLineInfo, setGuideLineInfo] = useState<GuideLineInfo | null>(null);
   const [guideLineError, setGuideLineError] = useState('');
-  const [moveGuide, setMoveGuide] = useState<{
-    pitch?: number;
-    roll?: number;
-    yaw?: number;
-    throttle?: number;
-  } | null>(null);
-  const [gimbalGuide, setGimbalGuide] = useState<{
-    horizontal?: number;
-    vertical?: number;
-  } | null>(null);
+  const [controlPromptMap, setControlPromptMap] = useState<ControlPromptMap>({});
   const [renderAspect, setRenderAspect] = useState<string | null>(null);
   const [sourceSize, setSourceSize] = useState<{ width: number; height: number } | null>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
@@ -1206,6 +1266,7 @@ function LivePusher() {
   const [taskOffNotice, setTaskOffNotice] = useState(false);
   const taskOffTimerRef = useRef<number | null>(null);
   const notifyTimerRef = useRef<number | null>(null);
+  const controlPromptTimersRef = useRef<Partial<Record<ControlPromptChannel, number>>>({});
   const videoWrapRef = useRef<HTMLDivElement | null>(null);
   const spectatorVideoRef = useRef<HTMLVideoElement | null>(null);
   const spectatorFlvPlayerRef = useRef<any>(null);
@@ -1223,9 +1284,68 @@ function LivePusher() {
       setNotifyMessage('');
     }, 2000);
   };
+
+  const clearControlPromptTimer = (channel: ControlPromptChannel) => {
+    const timer = controlPromptTimersRef.current[channel];
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      delete controlPromptTimersRef.current[channel];
+    }
+  };
+
+  const clearControlPrompts = () => {
+    (Object.keys(controlPromptTimersRef.current) as ControlPromptChannel[]).forEach(clearControlPromptTimer);
+    setControlPromptMap({});
+  };
+
+  const setControlPromptChannel = (channel: ControlPromptChannel, prompt: DisplayPrompt | null) => {
+    clearControlPromptTimer(channel);
+    if (!prompt) {
+      setControlPromptMap(prev => {
+        if (!prev[channel]) return prev;
+        const next = { ...prev };
+        delete next[channel];
+        return next;
+      });
+      return;
+    }
+
+    setControlPromptMap(prev => ({
+      ...prev,
+      [channel]: prompt
+    }));
+    controlPromptTimersRef.current[channel] = window.setTimeout(() => {
+      setControlPromptMap(prev => {
+        if (!prev[channel]) return prev;
+        const next = { ...prev };
+        delete next[channel];
+        return next;
+      });
+      delete controlPromptTimersRef.current[channel];
+    }, CONTROL_PROMPT_TTL_MS);
+  };
+
+  const updateControlPromptFromValue = (
+    channel: ControlPromptChannel,
+    value: unknown,
+    createPrompt: (value: number) => DisplayPrompt
+  ) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return;
+    if (value === 0) return;
+    setControlPromptChannel(channel, createPrompt(value));
+  };
+
   useEffect(() => {
     alignmentRunCompletedRef.current = alignmentRunCompleted;
   }, [alignmentRunCompleted]);
+  useEffect(() => {
+    return () => {
+      (Object.values(controlPromptTimersRef.current) as number[]).forEach(timer => {
+        window.clearTimeout(timer);
+      });
+      controlPromptTimersRef.current = {};
+    };
+  }, []);
   const selectedAlignmentTemplate =
       alignmentTemplates.find(item => item.key === selectedAlignmentTemplateKey) || null;
   const currentAlgoLabel =
@@ -1234,7 +1354,7 @@ function LivePusher() {
           : currentAlgoType === 'alignment_person'
               ? '对准-人'
               : currentAlgoType === 'guide_line'
-                  ? '引导线'
+                  ? '点线构图'
               : '未识别';
   const captureScrollTop = () => {
       const scrollingElement = document.scrollingElement;
@@ -1291,63 +1411,9 @@ function LivePusher() {
       guideLineInfo?.currentAngleDeg ??
       getGuideLineSegmentAngleDeg(selectedGuideLine);
   const isDroneControl = controlDevice === 'drone';
-  const movementSuggestions: DisplayPrompt[] = [];
-  if (moveGuide?.pitch !== undefined && moveGuide.pitch !== 0) {
-    movementSuggestions.push({
-      id: 'pitch',
-      text: moveGuide.pitch > 0 ? '向前' : '向后',
-      placement: 'video-bottom',
-      tone: 'instruction',
-      icon: { kind: 'vertical', direction: moveGuide.pitch > 0 ? 'up' : 'down' }
-    });
-  }
-  if (moveGuide?.roll !== undefined && moveGuide.roll !== 0) {
-    movementSuggestions.push({
-      id: 'roll',
-      text: moveGuide.roll > 0 ? '向右' : '向左',
-      placement: 'video-bottom',
-      tone: 'instruction',
-      icon: { kind: 'horizontal', direction: moveGuide.roll > 0 ? 'right' : 'left' }
-    });
-  }
-  if (moveGuide?.yaw !== undefined && moveGuide.yaw !== 0) {
-    movementSuggestions.push({
-      id: 'yaw',
-      text: moveGuide.yaw > 0 ? '顺时针转' : '逆时针转',
-      placement: 'video-bottom',
-      tone: 'instruction',
-      icon: { kind: 'rotate', direction: moveGuide.yaw > 0 ? 'clockwise' : 'counterclockwise' }
-    });
-  }
-  if (moveGuide?.throttle !== undefined && moveGuide.throttle !== 0) {
-    movementSuggestions.push({
-      id: 'throttle',
-      text: moveGuide.throttle > 0 ? '向上' : '向下',
-      placement: 'video-bottom',
-      tone: 'instruction',
-      icon: { kind: 'vertical', direction: moveGuide.throttle > 0 ? 'up' : 'down' }
-    });
-  }
-  const gimbalSuggestions: DisplayPrompt[] = [];
-  if (gimbalGuide?.vertical !== undefined && gimbalGuide.vertical !== 0) {
-    gimbalSuggestions.push({
-      id: 'gimbal-vertical',
-      text: gimbalGuide.vertical > 0 ? '云台调整-上' : '云台调整-下',
-      placement: 'video-bottom',
-      tone: 'instruction',
-      icon: { kind: 'vertical', direction: gimbalGuide.vertical > 0 ? 'up' : 'down' }
-    });
-  }
-  if (gimbalGuide?.horizontal !== undefined && gimbalGuide.horizontal !== 0) {
-    gimbalSuggestions.push({
-      id: 'gimbal-horizontal',
-      text: gimbalGuide.horizontal > 0 ? '云台调整-右' : '云台调整-左',
-      placement: 'video-bottom',
-      tone: 'instruction',
-      icon: { kind: 'horizontal', direction: gimbalGuide.horizontal > 0 ? 'right' : 'left' }
-    });
-  }
-  const controlSuggestions = [...movementSuggestions, ...gimbalSuggestions];
+  const controlSuggestions = CONTROL_PROMPT_CHANNELS
+    .map(channel => controlPromptMap[channel])
+    .filter((prompt): prompt is DisplayPrompt => Boolean(prompt));
   const localAlgorithmDisplay =
       currentAlgoType === 'alignment_person'
           ? buildAlignmentDisplayModel({
@@ -1503,8 +1569,7 @@ function LivePusher() {
             setImageSearchInfo(null);
             setGuideLineInfo(null);
             setServerDisplay(null);
-            setMoveGuide(null);
-            setGimbalGuide(null);
+            clearControlPrompts();
             setTaskOffNotice(false);
             setCurrentStage('');
             setCurrentStageCode('');
@@ -1541,8 +1606,7 @@ function LivePusher() {
             setRawInfo(null);
             setImageSearchInfo(null);
             setServerDisplay(null);
-            setMoveGuide(null);
-            setGimbalGuide(null);
+            clearControlPrompts();
             setCurrentStage('');
             setCurrentStageCode('');
             alignmentRunCompletedRef.current = true;
@@ -1559,21 +1623,13 @@ function LivePusher() {
             }, 1000);
           }
           if (!isAlignmentDoneMessage && !shouldIgnoreCompletedAlignmentUpdate && parsed?.command === 'move' && parsed?.param) {
-            setMoveGuide({
-              pitch: parsed.param.pitch,
-              roll: parsed.param.roll,
-              yaw: undefined,
-              throttle: undefined
-            });
+            updateControlPromptFromValue('move-pitch', parsed.param.pitch, createMovePitchPrompt);
+            updateControlPromptFromValue('move-roll', parsed.param.roll, createMoveRollPrompt);
           }
 
           if (!isAlignmentDoneMessage && !shouldIgnoreCompletedAlignmentUpdate && parsed?.command === 'adjust' && parsed?.param) {
-            setMoveGuide({
-              pitch: undefined,
-              roll: undefined,
-              yaw: parsed.param.yaw,
-              throttle: parsed.param.throttle
-            });
+            updateControlPromptFromValue('move-yaw', parsed.param.yaw, createMoveYawPrompt);
+            updateControlPromptFromValue('move-throttle', parsed.param.throttle, createMoveThrottlePrompt);
           }
 
           if (!isAlignmentDoneMessage && !shouldIgnoreCompletedAlignmentUpdate && parsed?.command === 'gimbal_adjust' && parsed?.param) {
@@ -1589,21 +1645,16 @@ function LivePusher() {
                     : typeof parsed.param.pitch === 'number'
                         ? parsed.param.pitch
                         : undefined;
-            setGimbalGuide({
-              horizontal,
-              vertical
-            });
+            updateControlPromptFromValue('gimbal-horizontal', horizontal, createGimbalHorizontalPrompt);
+            updateControlPromptFromValue('gimbal-vertical', vertical, createGimbalVerticalPrompt);
           }
 
           if (!isAlignmentDoneMessage && !shouldIgnoreCompletedAlignmentUpdate && parsed && parsed.type === 'move') {
             // 兼容旧协议（type=move, move/raw）
             if (parsed.move) {
-              setMoveGuide(prev => ({
-                ...(prev || {}),
-                pitch: parsed.move.pitch,
-                roll: parsed.move.roll,
-                yaw: parsed.move.circle
-              }));
+              updateControlPromptFromValue('move-pitch', parsed.move.pitch, createMovePitchPrompt);
+              updateControlPromptFromValue('move-roll', parsed.move.roll, createMoveRollPrompt);
+              updateControlPromptFromValue('move-yaw', parsed.move.circle, createMoveYawPrompt);
             }
           }
 
@@ -2002,7 +2053,7 @@ function LivePusher() {
     setCurrentStageCode('');
     alignmentRunCompletedRef.current = false;
     setAlignmentRunCompleted(false);
-    setGimbalGuide(null);
+    clearControlPrompts();
   }, [activeMode]);
 
   useEffect(() => {
@@ -2312,37 +2363,36 @@ function LivePusher() {
       const requestBody: GuideLinePayload = {
         type: 'guide_line',
         streamUrl: getStreamUrlBySource(controlDevice),
-        proEnabled: guideLineForm.proEnabled
+        guideLineVersion: 'pro',
+        proEnabled: true
       };
-      if (guideLineForm.proEnabled) {
-        const alignmentPosition = parseGuideLineNumberInput(guideLineForm.alignmentPosition, '参考线位置');
-        const alignmentPositionTolerancePercent = parseGuideLineNumberInput(
-          guideLineForm.alignmentPositionTolerancePercent,
-          '位置容忍比例'
-        );
-        const alignmentAngleToleranceDeg = parseGuideLineNumberInput(
-          guideLineForm.alignmentAngleToleranceDeg,
-          '角度容忍度'
-        );
+      const alignmentPosition = parseGuideLineNumberInput(guideLineForm.alignmentPosition, '参考线位置');
+      const alignmentPositionTolerancePercent = parseGuideLineNumberInput(
+        guideLineForm.alignmentPositionTolerancePercent,
+        '位置容忍比例'
+      );
+      const alignmentAngleToleranceDeg = parseGuideLineNumberInput(
+        guideLineForm.alignmentAngleToleranceDeg,
+        '角度容忍度'
+      );
 
-        if (alignmentPosition < 0 || alignmentPosition > 1) {
-          throw new Error('参考线位置需在 0~1 之间');
-        }
-        if (alignmentPositionTolerancePercent < 0 || alignmentPositionTolerancePercent > 100) {
-          throw new Error('位置容忍比例需在 0~100% 之间');
-        }
-        if (alignmentAngleToleranceDeg < 0) {
-          throw new Error('角度容忍度不能小于 0 度');
-        }
-
-        requestBody.showOtherLines = guideLineForm.showOtherLines;
-        requestBody.alignmentOrientation = guideLineForm.alignmentOrientation;
-        requestBody.alignmentPosition = alignmentPosition;
-        requestBody.alignmentPositionToleranceRatio = Number(
-          (alignmentPositionTolerancePercent / 100).toFixed(6)
-        );
-        requestBody.alignmentAngleToleranceDeg = alignmentAngleToleranceDeg;
+      if (alignmentPosition < 0 || alignmentPosition > 1) {
+        throw new Error('参考线位置需在 0~1 之间');
       }
+      if (alignmentPositionTolerancePercent < 0 || alignmentPositionTolerancePercent > 100) {
+        throw new Error('位置容忍比例需在 0~100% 之间');
+      }
+      if (alignmentAngleToleranceDeg < 0) {
+        throw new Error('角度容忍度不能小于 0 度');
+      }
+
+      requestBody.showOtherLines = guideLineForm.showOtherLines;
+      requestBody.alignmentOrientation = guideLineForm.alignmentOrientation;
+      requestBody.alignmentPosition = alignmentPosition;
+      requestBody.alignmentPositionToleranceRatio = Number(
+        (alignmentPositionTolerancePercent / 100).toFixed(6)
+      );
+      requestBody.alignmentAngleToleranceDeg = alignmentAngleToleranceDeg;
 
       const response = await fetch(WEB_SERVER, {
         method: 'POST',
@@ -2355,18 +2405,12 @@ function LivePusher() {
         throw new Error(`提交失败（HTTP ${response.status}）`);
       }
       const nextGuideLineOptions = {
-        proEnabled: guideLineForm.proEnabled,
-        showOtherLines: guideLineForm.proEnabled ? guideLineForm.showOtherLines : true,
+        proEnabled: true,
+        showOtherLines: guideLineForm.showOtherLines,
         alignmentOrientation: guideLineForm.alignmentOrientation,
-        alignmentPosition: guideLineForm.proEnabled
-          ? requestBody.alignmentPosition ?? 0.5
-          : latestGuideLineOptions.alignmentPosition,
-        alignmentPositionToleranceRatio: guideLineForm.proEnabled
-          ? requestBody.alignmentPositionToleranceRatio ?? 0.05
-          : latestGuideLineOptions.alignmentPositionToleranceRatio,
-        alignmentAngleToleranceDeg: guideLineForm.proEnabled
-          ? requestBody.alignmentAngleToleranceDeg ?? 5
-          : latestGuideLineOptions.alignmentAngleToleranceDeg
+        alignmentPosition: requestBody.alignmentPosition ?? 0.5,
+        alignmentPositionToleranceRatio: requestBody.alignmentPositionToleranceRatio ?? 0.05,
+        alignmentAngleToleranceDeg: requestBody.alignmentAngleToleranceDeg ?? 5
       };
       setLatestGuideLineOptions(nextGuideLineOptions);
       currentAlgoTypeRef.current = 'guide_line';
@@ -2379,7 +2423,7 @@ function LivePusher() {
         }
       );
     } catch (err) {
-      console.error('提交引导线失败', err);
+      console.error('提交点线构图失败', err);
       setGuideLineError((err as Error).message || '提交失败');
     }
   };
@@ -2504,8 +2548,7 @@ function LivePusher() {
     // 重新提交任务时清空画面提示
     setRawInfo(null);
     setServerDisplay(null);
-    setMoveGuide(null);
-    setGimbalGuide(null);
+    clearControlPrompts();
     setTaskOffNotice(false);
     setCurrentStage('');
     setCurrentStageCode('');
@@ -3014,7 +3057,7 @@ function LivePusher() {
                               : 'bg-slate-700'
                       }`}
                   >
-                    引导线
+                    点线构图
                   </button>
                 </div>
               </>
@@ -3103,120 +3146,97 @@ function LivePusher() {
             {isStreaming && activeMode === 'guide_line' && (
                 <div className="mt-4 space-y-3">
                   <div className="rounded-xl bg-slate-900/80 p-3 text-sm text-slate-300">
-                    按当前直播流发起引导线识别。可以切换是否使用引导线 Pro，以及在 Pro 模式下是否展示其他线条。
+                    按当前直播流发起点线构图识别。默认使用跟踪与对准流程，可配置展示线条、对准方向和容忍阈值。
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="flex items-center gap-3 rounded bg-slate-900 px-3 py-3 text-sm text-white">
                       <input
                           type="checkbox"
-                          checked={guideLineForm.proEnabled}
+                          checked={guideLineForm.showOtherLines}
                           onChange={e =>
                               setGuideLineForm(prev => ({
                                 ...prev,
-                                proEnabled: e.target.checked
+                                showOtherLines: e.target.checked
                               }))
                           }
                           className="h-4 w-4 rounded border-slate-500 bg-slate-800"
                       />
-                      是否使用引导线 Pro
+                      选择是否展示其他线条
                     </label>
 
-                    {guideLineForm.proEnabled ? (
-                        <>
-                          <label className="flex items-center gap-3 rounded bg-slate-900 px-3 py-3 text-sm text-white">
-                            <input
-                                type="checkbox"
-                                checked={guideLineForm.showOtherLines}
-                                onChange={e =>
-                                    setGuideLineForm(prev => ({
-                                      ...prev,
-                                      showOtherLines: e.target.checked
-                                    }))
-                                }
-                                className="h-4 w-4 rounded border-slate-500 bg-slate-800"
-                            />
-                            选择是否展示其他线条
-                          </label>
+                    <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                      <span>点线构图对准方向</span>
+                      <select
+                          value={guideLineForm.alignmentOrientation}
+                          onChange={e =>
+                              setGuideLineForm(prev => ({
+                                ...prev,
+                                alignmentOrientation: e.target.value as GuideLineAlignmentOrientation
+                              }))
+                          }
+                          className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
+                      >
+                        <option value="horizontal">水平（上下位置对准）</option>
+                        <option value="vertical">垂直（左右位置对准）</option>
+                      </select>
+                    </label>
 
-                          <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
-                            <span>引导线对准方向</span>
-                            <select
-                                value={guideLineForm.alignmentOrientation}
-                                onChange={e =>
-                                    setGuideLineForm(prev => ({
-                                      ...prev,
-                                      alignmentOrientation: e.target.value as GuideLineAlignmentOrientation
-                                    }))
-                                }
-                                className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
-                            >
-                              <option value="horizontal">水平（上下位置对准）</option>
-                              <option value="vertical">垂直（左右位置对准）</option>
-                            </select>
-                          </label>
+                    <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                      <span>参考线位置（0~1）</span>
+                      <input
+                          type="number"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          inputMode="decimal"
+                          value={guideLineForm.alignmentPosition}
+                          onChange={e =>
+                              setGuideLineForm(prev => ({
+                                ...prev,
+                                alignmentPosition: e.target.value
+                              }))
+                          }
+                          className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
+                      />
+                    </label>
 
-                          <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
-                            <span>参考线位置（0~1）</span>
-                            <input
-                                type="number"
-                                min="0"
-                                max="1"
-                                step="0.01"
-                                inputMode="decimal"
-                                value={guideLineForm.alignmentPosition}
-                                onChange={e =>
-                                    setGuideLineForm(prev => ({
-                                      ...prev,
-                                      alignmentPosition: e.target.value
-                                    }))
-                                }
-                                className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
-                            />
-                          </label>
+                    <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                      <span>位置容忍比例（%）</span>
+                      <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.1"
+                          inputMode="decimal"
+                          value={guideLineForm.alignmentPositionTolerancePercent}
+                          onChange={e =>
+                              setGuideLineForm(prev => ({
+                                ...prev,
+                                alignmentPositionTolerancePercent: e.target.value
+                              }))
+                          }
+                          className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
+                      />
+                    </label>
 
-                          <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
-                            <span>位置容忍比例（%）</span>
-                            <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                step="0.1"
-                                inputMode="decimal"
-                                value={guideLineForm.alignmentPositionTolerancePercent}
-                                onChange={e =>
-                                    setGuideLineForm(prev => ({
-                                      ...prev,
-                                      alignmentPositionTolerancePercent: e.target.value
-                                    }))
-                                }
-                                className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
-                            />
-                          </label>
-
-                          <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
-                            <span>角度容忍度（度）</span>
-                            <input
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                inputMode="decimal"
-                                value={guideLineForm.alignmentAngleToleranceDeg}
-                                onChange={e =>
-                                    setGuideLineForm(prev => ({
-                                      ...prev,
-                                      alignmentAngleToleranceDeg: e.target.value
-                                    }))
-                                }
-                                className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
-                            />
-                          </label>
-                        </>
-                    ) : (
-                        <div className="rounded bg-slate-900 px-3 py-3 text-sm text-slate-400">
-                          关闭 Pro 后，仅提交基础引导线模式参数。
-                        </div>
-                    )}
+                    <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
+                      <span>角度容忍度（度）</span>
+                      <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          inputMode="decimal"
+                          value={guideLineForm.alignmentAngleToleranceDeg}
+                          onChange={e =>
+                              setGuideLineForm(prev => ({
+                                ...prev,
+                                alignmentAngleToleranceDeg: e.target.value
+                              }))
+                          }
+                          className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
+                      />
+                    </label>
                   </div>
 
                   <button

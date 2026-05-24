@@ -59,8 +59,8 @@
 - `PhotoLibrary` 页面管理 `photo_library` KV 数据，最多保存 10 张照片。
 - 上传前会对大图压缩：最长边目标 1280px，目标体积约 900KB，保存为 JPEG；不要退回直接保存超大 base64 的模式。
 - 主预览和算法结果预览必须使用完整显示，不要裁切主体；缩略图列表可以裁剪以保持卡片稳定。
-- `引导线-LLM` 只提交 `Prompt + imageBase64 + taskId`，不要重新加入 API Auth 或 LLM API Key。
-- `引导线-LLM` 的 HTTP 下发地址为 `https://www.uiofield.top/meya/push`，结果通过 `wss://www.uiofield.top/meya/ws` 返回 `guide_line_lite_result`。
+- `点线构图-LLM` 提交 `Prompt + imageBase64 + taskId`，可选提交 `includeMlsd` 开关；不要重新加入 API Auth 或 LLM API Key。
+- `点线构图-LLM` 的 HTTP 下发地址为 `https://www.uiofield.top/meya/push`，结果通过 `wss://www.uiofield.top/meya/ws` 返回 `guide_line_lite_result`。
 - WebSocket 结果必须按 `taskId` 匹配当前待处理任务；超时、解析失败和连接异常都要稳定展示错误，不应卡在等待态。
 
 ## Config Page Constraints
@@ -69,7 +69,7 @@
 - `基础配置` 的 A/B 默认选项来自 `src/shared/intentTemplateOptions.ts`，默认项锁定，不可编辑或删除。
 - 历史上已移除进入配置页时对 `composition_body_range_options` 和 `composition_shot_type_options` 的自动拉取；不要重新加回页面加载时的噪声请求，除非用户明确要求。
 - A/B 自定义项仍使用配置服务 KV 保存能力；删除或修改前必须检查是否被比例表、评价表或意图模版引用。
-- `五、引导线配置` 和 `七、拍照阈值设置` 当前在基础配置 UI 中按“数据还未接入到主控”禁用展示；不要接入假保存。
+- `五、点线构图配置` 和 `七、拍照阈值设置` 当前在基础配置 UI 中按“数据还未接入到主控”禁用展示；不要接入假保存。
 - `八、拍摄终端设置` 当前仅为前端本地状态，不持久化。
 - 基础配置的数据结构说明以 `docs/config-panel-data-structures.md` 为准；修改字段、key、存储格式或校验规则时必须同步更新。
 

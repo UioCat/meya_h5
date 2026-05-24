@@ -6,7 +6,7 @@
 
 ## Purpose
 
-照片库用于保存少量调试图片，选择图片后发起 `引导线-LLM` Lite 算法，并展示 WebSocket 返回的标注结果。
+照片库用于保存少量调试图片，选择图片后发起 `点线构图-LLM` Lite 算法，并展示 WebSocket 返回的标注结果。
 
 ## Layout
 
@@ -55,31 +55,39 @@
 
 ## Algorithm Behavior
 
-- 点击 `引导线-LLM` 打开 modal。
-- modal 只包含 `Prompt`，不要加入 API Auth、LLM API Key 或其他密钥输入。
+- 点击 `点线构图-LLM` 打开 modal。
+- modal 包含 `Prompt`、`传递结构线`、`传递汇聚点` 两个开关；两个开关每次打开 modal 时默认开启。不要加入 API Auth、LLM API Key 或其他密钥输入。
 - Prompt 不能为空。
+- 两个开关不能同时关闭；否则阻止提交并提示至少选择一种候选。
+- 点击提交并通过前端校验后，立即清除上一轮算法结果，结果区域进入等待态。
+- 请求体同时发送 `includeConstructionLines` 和 `includeConvergePoints`；兼容字段 `includeMlsd` 跟随 `includeConvergePoints`。
 - 提交地址：`https://www.uiofield.top/meya/push`。
 - 请求体：
 
 ```json
 {
-  "type": "guide_line_lite",
+  "type": "点线构图Lite",
   "taskId": "<selected photo key>",
   "prompt": "<trimmed prompt>",
+  "includeConstructionLines": true,
+  "includeConvergePoints": true,
+  "includeMlsd": true,
   "imageBase64": "<base64 payload without data URL prefix>"
 }
 ```
 
 - HTTP 成功只表示任务已下发，结果通过 WebSocket 返回。
 - 页面挂载后连接 `wss://www.uiofield.top/meya/ws`，每 5 秒心跳。
-- 只处理 `guide_line_lite_result`，并按 `taskId` 匹配当前 pending 任务。
+- 只处理返回事件 `guide_line_lite_result`，并按 `taskId` 匹配当前 pending 任务；该返回事件类型保持不变。
 - 60 秒未收到结果时，退出等待态并显示超时提示。
 
 ## Result Display
 
-- 结果优先读取 `imageDataUrl`。
-- 兼容 `imageBase64 + imageContentType` 拼成 data URL。
-- 展示候选线数量、LLM 选中线、任务 ID、状态码、状态消息和 `llm` JSON。
+- 结果读取 `imageDataUrl`。
+- 展示候选结构线数量、候选汇聚点数量、选中结构线、选中汇聚点、任务 ID、状态码、状态消息和 `llm` JSON。
+- 新结果优先读取 `selectedConstructionIds` 和 `selectedConvergePoints` / `selectConvergePoints`；旧结果兼容 `selectedOptionIds` / `selectedIds`、`selectedGuideLineIds` 和 `selectedMlsdPoints`。
+- LLM JSON 结果框支持一键复制，并允许用户纵向拖拽调整高度；默认高度保持当前展示高度。
+- 后端英文状态 `llm selected candidate(s); selected candidates marked green and other candidates marked blue` 在页面展示为中文。
 - 解析失败、WebSocket 异常、HTTP 异常均展示错误，不应卡死 modal 或按钮。
 
 ## Constraints

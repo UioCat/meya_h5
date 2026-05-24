@@ -38,7 +38,7 @@ const basicConfigSections = [
   '二、景别与主体占比',
   '三、主体占比评价标准',
   '四、主体偏离度评分标准',
-  '五、引导线配置',
+  '五、点线构图配置',
   '六、笑容检测参数',
   '七、拍照阈值设置',
   '八、拍摄终端设置'
@@ -47,7 +47,7 @@ const basicConfigSections = [
 const PENDING_CONTROL_MESSAGE = '数据还未接入到主控';
 const pendingCompositionParamKeys = new Set(['K']);
 const pendingConfigSections = new Set([
-  '五、引导线配置',
+  '五、点线构图配置',
   '七、拍照阈值设置'
 ]);
 
