@@ -97,6 +97,8 @@
   "orientation": "C1正脸",
   "compositionMethod": "D1居中构图",
   "compositionObject": "双眼中心点",
+  "structureLineAlignmentLine": "H1",
+  "structureLineAlignmentPoint": "H1V1",
   "cameraHeight": "E5齐眼",
   "eyeStatus": "睁眼",
   "mouthStatus": "微笑"
@@ -106,8 +108,11 @@
 - 所有字段提交前不能为空。
 - 所有字段必须在当前可选范围内。
 - `compositionObject` 兼容旧值 `眼睛`，规范化为 `双眼中心点`。
+- `structureLineAlignmentLine` 中文业务名为「点线构图对准-线」，可选值为 `H1`、`H2`、`水平中心`、`V1`、`V2`、`竖直中心`。
+- `structureLineAlignmentPoint` 中文业务名为「点线构图对准-点」，可选值为 `H1V1`、`H1V2`、`H2V1`、`H2V2`。
+- 点线关系：H 表示水平分割线，V 表示竖直分割线；`H1` 为 `y = 1/3`，`H2` 为 `y = 2/3`，`V1` 为 `x = 1/3`，`V2` 为 `x = 2/3`；`H1V1` 是 `(x = 1/3, y = 1/3)`，其他点同理。
 - 选择 A 后，B 必须按当前可用 A/B 组合过滤。
-- 老模版缺 `cameraHeight` 或 `compositionObject` 时，读取层使用默认值兜底，避免列表读挂。
+- 老模版缺 `cameraHeight`、`compositionObject`、`structureLineAlignmentLine` 或 `structureLineAlignmentPoint` 时，读取层使用默认值兜底，避免列表读挂；其中线默认 `H1`，点默认 `H1V1`。
 
 ## Data Contracts
 

@@ -188,6 +188,8 @@ export const compositionParams = [
 export const eyeStatusOptions = ['闭眼', '一睁一闭', '睁眼'] as const;
 export const mouthStatusOptions = ['不笑', '微笑', '大笑'] as const;
 export const compositionObjectOptions = ['人体头部中心点', '双眼中心点'] as const;
+export const structureLineAlignmentLineOptions = ['H1', 'H2', '水平中心', 'V1', 'V2', '竖直中心'] as const;
+export const structureLineAlignmentPointOptions = ['H1V1', 'H1V2', 'H2V1', 'H2V2'] as const;
 
 export const normalizeCompositionObjectValue = (value: string) => {
   const normalized = normalizeOptionValue(value);
@@ -351,6 +353,8 @@ export const intentTemplateOptions = {
   compositionMethod: compositionParams.find(param => param.key === 'D')?.options ?? [],
   cameraHeight: compositionParams.find(param => param.key === 'E')?.options ?? [],
   compositionObject: compositionObjectOptions,
+  structureLineAlignmentLine: structureLineAlignmentLineOptions,
+  structureLineAlignmentPoint: structureLineAlignmentPointOptions,
   eyeStatus: eyeStatusOptions,
   mouthStatus: mouthStatusOptions
 } as const;

@@ -38,6 +38,8 @@
   "orientation": "左侧45度",
   "compositionMethod": "居中构图",
   "compositionObject": "双眼中心点",
+  "structureLineAlignmentLine": "H1",
+  "structureLineAlignmentPoint": "H1V1",
   "cameraHeight": "齐肩",
   "eyeStatus": "睁眼",
   "mouthStatus": "不笑"
@@ -58,6 +60,8 @@
 | `orientation` | `string` | 是 | 由模版中的 `orientation` 解析得到，例如 `C1正脸 -> 正脸` |
 | `compositionMethod` | `string` | 是 | 由模版中的 `compositionMethod` 解析得到，例如 `D1居中构图 -> 居中构图` |
 | `compositionObject` | `string` | 是 | 模版中的构图对象，当前直接下发，例如 `双眼中心点` |
+| `structureLineAlignmentLine` | `string` | 是 | 模版中的「点线构图对准-线」，当前直接下发，例如 `H1` |
+| `structureLineAlignmentPoint` | `string` | 是 | 模版中的「点线构图对准-点」，当前直接下发，例如 `H1V1` |
 | `cameraHeight` | `string` | 是 | 由模版中的 `cameraHeight` 解析得到，例如 `E5齐眼 -> 齐眼` |
 | `eyeStatus` | `string` | 是 | 模版中的眼睛状态，当前直接下发，例如 `睁眼` |
 | `mouthStatus` | `string` | 是 | 模版中的嘴巴状态，当前直接下发，例如 `微笑` |
@@ -105,6 +109,16 @@
   直接使用模版中的枚举值。
   当前枚举值：
   `人体头部中心点`、`双眼中心点`
+- `structureLineAlignmentLine`
+  直接使用模版中的枚举值。
+  中文业务名：`点线构图对准-线`。
+  当前枚举值：
+  `H1`、`H2`、`水平中心`、`V1`、`V2`、`竖直中心`
+- `structureLineAlignmentPoint`
+  直接使用模版中的枚举值。
+  中文业务名：`点线构图对准-点`。
+  当前枚举值：
+  `H1V1`、`H1V2`、`H2V1`、`H2V2`
 - `cameraHeight`
   由模版中的 `cameraHeight` 去掉编码前缀后得到。
   当前枚举值：
@@ -131,6 +145,8 @@
   "orientation": "C1正脸",
   "compositionMethod": "D1居中构图",
   "compositionObject": "双眼中心点",
+  "structureLineAlignmentLine": "H1",
+  "structureLineAlignmentPoint": "H1V1",
   "cameraHeight": "E5齐眼",
   "eyeStatus": "睁眼",
   "mouthStatus": "微笑"
@@ -162,6 +178,15 @@
 - `cameraHeight`
 
 其中 `compositionObject` 不带编码，直接使用模版中的枚举值，例如 `双眼中心点` 或 `人体头部中心点`。
+
+`structureLineAlignmentLine` 和 `structureLineAlignmentPoint` 也不带编码，直接使用模版中的枚举值并随对准-人请求下发。旧模版如果缺少这两个字段，前端读取时使用默认值：`structureLineAlignmentLine = H1`，`structureLineAlignmentPoint = H1V1`。
+
+点线构图坐标关系：
+
+- H 表示水平分割线，V 表示竖直分割线。
+- `H1` 是画面 `y = 1/3` 的水平线，`H2` 是 `y = 2/3` 的水平线，`水平中心` 是 `y = 1/2`。
+- `V1` 是画面 `x = 1/3` 的竖直线，`V2` 是 `x = 2/3` 的竖直线，`竖直中心` 是 `x = 1/2`。
+- `H1V1` 是 `H1` 与 `V1` 的交点，即 `(x = 1/3, y = 1/3)`；其他点同理。
 
 ### 5.3 景别与主体占比校验规则
 
@@ -468,6 +493,8 @@
     "orientation": "C1正脸",
     "compositionMethod": "D1居中构图",
     "compositionObject": "双眼中心点",
+    "structureLineAlignmentLine": "H1",
+    "structureLineAlignmentPoint": "H1V1",
     "cameraHeight": "E5齐眼",
     "eyeStatus": "睁眼",
     "mouthStatus": "微笑"
@@ -489,6 +516,8 @@
   "orientation": "正脸",
   "compositionMethod": "居中构图",
   "compositionObject": "双眼中心点",
+  "structureLineAlignmentLine": "H1",
+  "structureLineAlignmentPoint": "H1V1",
   "cameraHeight": "齐眼",
   "eyeStatus": "睁眼",
   "mouthStatus": "微笑"

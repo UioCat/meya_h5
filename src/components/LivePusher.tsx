@@ -38,6 +38,8 @@ type AlignmentTemplateValue = {
   orientation: string;
   compositionMethod: string;
   compositionObject: string;
+  structureLineAlignmentLine: string;
+  structureLineAlignmentPoint: string;
   cameraHeight: string;
   eyeStatus: string;
   mouthStatus: string;
@@ -1040,6 +1042,8 @@ type AlignmentPersonPayload = {
   orientation: string;
   compositionMethod: string;
   compositionObject: string;
+  structureLineAlignmentLine: string;
+  structureLineAlignmentPoint: string;
   cameraHeight: string;
   eyeStatus: string;
   mouthStatus: string;
@@ -1049,7 +1053,10 @@ type GuideLineAlignmentOrientation = 'horizontal' | 'vertical';
 
 type GuideLinePayload = {
   type: 'guide_line';
+  templateKey: string;
   streamUrl: string;
+  structureLineAlignmentLine: string;
+  structureLineAlignmentPoint: string;
   guideLineVersion?: 'pro';
   proEnabled?: boolean;
   showOtherLines?: boolean;
@@ -1057,6 +1064,30 @@ type GuideLinePayload = {
   alignmentPosition?: number;
   alignmentPositionToleranceRatio?: number;
   alignmentAngleToleranceDeg?: number;
+};
+
+const GUIDE_LINE_ALIGNMENT_BY_TEMPLATE_LINE: Record<
+  string,
+  {
+    alignmentOrientation: GuideLineAlignmentOrientation;
+    alignmentPosition: number;
+  }
+> = {
+  H1: { alignmentOrientation: 'horizontal', alignmentPosition: 1 / 3 },
+  H2: { alignmentOrientation: 'horizontal', alignmentPosition: 2 / 3 },
+  水平中心: { alignmentOrientation: 'horizontal', alignmentPosition: 0.5 },
+  V1: { alignmentOrientation: 'vertical', alignmentPosition: 1 / 3 },
+  V2: { alignmentOrientation: 'vertical', alignmentPosition: 2 / 3 },
+  竖直中心: { alignmentOrientation: 'vertical', alignmentPosition: 0.5 }
+};
+
+const getGuideLineAlignmentFromTemplateLine = (line: string) => {
+  const normalizedLine = normalizeOptionValue(line);
+  const alignment = GUIDE_LINE_ALIGNMENT_BY_TEMPLATE_LINE[normalizedLine];
+  if (!alignment) {
+    throw new Error(`当前模版的点线构图对准-线 ${line || '--'} 暂不支持`);
+  }
+  return alignment;
 };
 
 type StreamSourceOption = 'mobile' | 'drone';
@@ -1087,6 +1118,8 @@ const parseAlignmentTemplateValue = (value: unknown): AlignmentTemplateValue | n
     orientation: ['orientation'],
     compositionMethod: ['compositionMethod', 'composition_method'],
     compositionObject: ['compositionObject', 'composition_object'],
+    structureLineAlignmentLine: ['structureLineAlignmentLine', 'structure_line_alignment_line'],
+    structureLineAlignmentPoint: ['structureLineAlignmentPoint', 'structure_line_alignment_point'],
     cameraHeight: ['cameraHeight', 'camera_height'],
     eyeStatus: ['eyeStatus', 'eye_status'],
     mouthStatus: ['mouthStatus', 'mouth_status']
@@ -1106,9 +1139,31 @@ const parseAlignmentTemplateValue = (value: unknown): AlignmentTemplateValue | n
         next[key] = intentTemplateOptions.compositionObject[1] ?? intentTemplateOptions.compositionObject[0] ?? '';
         continue;
       }
+      if (key === 'structureLineAlignmentLine') {
+        next[key] = intentTemplateOptions.structureLineAlignmentLine[0] ?? '';
+        continue;
+      }
+      if (key === 'structureLineAlignmentPoint') {
+        next[key] = intentTemplateOptions.structureLineAlignmentPoint[0] ?? '';
+        continue;
+      }
       return null;
     }
-    next[key] = key === 'compositionObject' ? normalizeCompositionObjectValue(rawValue) : normalizeOptionValue(rawValue);
+    const normalizedValue =
+      key === 'compositionObject' ? normalizeCompositionObjectValue(rawValue) : normalizeOptionValue(rawValue);
+    if (
+      key === 'structureLineAlignmentLine' &&
+      !(intentTemplateOptions.structureLineAlignmentLine as readonly string[]).includes(normalizedValue)
+    ) {
+      return null;
+    }
+    if (
+      key === 'structureLineAlignmentPoint' &&
+      !(intentTemplateOptions.structureLineAlignmentPoint as readonly string[]).includes(normalizedValue)
+    ) {
+      return null;
+    }
+    next[key] = normalizedValue;
   }
   return next;
 };
@@ -1240,8 +1295,6 @@ function LivePusher() {
   const [alignmentIbvsMode, setAlignmentIbvsMode] = useState(false);
   const [guideLineForm, setGuideLineForm] = useState({
     showOtherLines: true,
-    alignmentOrientation: 'horizontal' as GuideLineAlignmentOrientation,
-    alignmentPosition: '0.5',
     alignmentPositionTolerancePercent: '5',
     alignmentAngleToleranceDeg: '5'
   });
@@ -1882,6 +1935,9 @@ function LivePusher() {
   const loadAlignmentTemplates = async () => {
     setAlignmentTemplateLoading(true);
     setAlignmentError('');
+    if (activeMode === 'guide_line') {
+      setGuideLineError('');
+    }
     try {
       const resp = await fetch(
           `${CONFIG_SERVER_BASE_URL}/kvs?type=${encodeURIComponent(ALIGNMENT_TEMPLATE_TYPE)}&t=${Date.now()}`,
@@ -1918,7 +1974,12 @@ function LivePusher() {
               : parsedItems[0]?.key || ''
       );
     } catch (err: any) {
-      setAlignmentError(err.message || '获取模版失败');
+      const message = err.message || '获取模版失败';
+      if (activeMode === 'guide_line') {
+        setGuideLineError(message);
+      } else {
+        setAlignmentError(message);
+      }
     } finally {
       setAlignmentTemplateLoading(false);
     }
@@ -2041,7 +2102,7 @@ function LivePusher() {
   };
 
   useEffect(() => {
-    if (activeMode === 'alignment_person') {
+    if (activeMode === 'alignment_person' || activeMode === 'guide_line') {
       void loadAlignmentTemplates();
     }
   }, [activeMode]);
@@ -2360,13 +2421,14 @@ function LivePusher() {
     setGuideLineInfo(null);
     setServerDisplay(null);
     try {
-      const requestBody: GuideLinePayload = {
-        type: 'guide_line',
-        streamUrl: getStreamUrlBySource(controlDevice),
-        guideLineVersion: 'pro',
-        proEnabled: true
-      };
-      const alignmentPosition = parseGuideLineNumberInput(guideLineForm.alignmentPosition, '参考线位置');
+      if (!selectedAlignmentTemplate) {
+        throw new Error('请先选择模版');
+      }
+
+      const selectedTemplate = selectedAlignmentTemplate.value;
+      const templateLineAlignment = getGuideLineAlignmentFromTemplateLine(
+        selectedTemplate.structureLineAlignmentLine
+      );
       const alignmentPositionTolerancePercent = parseGuideLineNumberInput(
         guideLineForm.alignmentPositionTolerancePercent,
         '位置容忍比例'
@@ -2376,9 +2438,6 @@ function LivePusher() {
         '角度容忍度'
       );
 
-      if (alignmentPosition < 0 || alignmentPosition > 1) {
-        throw new Error('参考线位置需在 0~1 之间');
-      }
       if (alignmentPositionTolerancePercent < 0 || alignmentPositionTolerancePercent > 100) {
         throw new Error('位置容忍比例需在 0~100% 之间');
       }
@@ -2386,13 +2445,23 @@ function LivePusher() {
         throw new Error('角度容忍度不能小于 0 度');
       }
 
-      requestBody.showOtherLines = guideLineForm.showOtherLines;
-      requestBody.alignmentOrientation = guideLineForm.alignmentOrientation;
-      requestBody.alignmentPosition = alignmentPosition;
-      requestBody.alignmentPositionToleranceRatio = Number(
+      const alignmentPositionToleranceRatio = Number(
         (alignmentPositionTolerancePercent / 100).toFixed(6)
       );
-      requestBody.alignmentAngleToleranceDeg = alignmentAngleToleranceDeg;
+      const requestBody: GuideLinePayload = {
+        type: 'guide_line',
+        templateKey: selectedAlignmentTemplate.key,
+        streamUrl: getStreamUrlBySource(controlDevice),
+        structureLineAlignmentLine: selectedTemplate.structureLineAlignmentLine,
+        structureLineAlignmentPoint: selectedTemplate.structureLineAlignmentPoint,
+        guideLineVersion: 'pro',
+        proEnabled: true,
+        showOtherLines: guideLineForm.showOtherLines,
+        alignmentOrientation: templateLineAlignment.alignmentOrientation,
+        alignmentPosition: templateLineAlignment.alignmentPosition,
+        alignmentPositionToleranceRatio,
+        alignmentAngleToleranceDeg
+      };
 
       const response = await fetch(WEB_SERVER, {
         method: 'POST',
@@ -2407,10 +2476,10 @@ function LivePusher() {
       const nextGuideLineOptions = {
         proEnabled: true,
         showOtherLines: guideLineForm.showOtherLines,
-        alignmentOrientation: guideLineForm.alignmentOrientation,
-        alignmentPosition: requestBody.alignmentPosition ?? 0.5,
-        alignmentPositionToleranceRatio: requestBody.alignmentPositionToleranceRatio ?? 0.05,
-        alignmentAngleToleranceDeg: requestBody.alignmentAngleToleranceDeg ?? 5
+        alignmentOrientation: templateLineAlignment.alignmentOrientation,
+        alignmentPosition: templateLineAlignment.alignmentPosition,
+        alignmentPositionToleranceRatio,
+        alignmentAngleToleranceDeg
       };
       setLatestGuideLineOptions(nextGuideLineOptions);
       currentAlgoTypeRef.current = 'guide_line';
@@ -2643,6 +2712,8 @@ function LivePusher() {
         orientation: concreteOrientation,
         compositionMethod: concreteCompositionMethod,
         compositionObject: selectedTemplate.compositionObject,
+        structureLineAlignmentLine: selectedTemplate.structureLineAlignmentLine,
+        structureLineAlignmentPoint: selectedTemplate.structureLineAlignmentPoint,
         cameraHeight: concreteCameraHeight,
         eyeStatus: selectedTemplate.eyeStatus,
         mouthStatus: selectedTemplate.mouthStatus
@@ -3111,6 +3182,8 @@ function LivePusher() {
                           <div>机位高度（E）：{selectedAlignmentTemplate.value.cameraHeight}</div>
                           <div>眼睛状态：{selectedAlignmentTemplate.value.eyeStatus}</div>
                           <div>嘴巴状态：{selectedAlignmentTemplate.value.mouthStatus}</div>
+                          <div>点线构图对准-线：{selectedAlignmentTemplate.value.structureLineAlignmentLine}</div>
+                          <div>点线构图对准-点：{selectedAlignmentTemplate.value.structureLineAlignmentPoint}</div>
                         </div>
                     )}
                   </div>
@@ -3146,7 +3219,44 @@ function LivePusher() {
             {isStreaming && activeMode === 'guide_line' && (
                 <div className="mt-4 space-y-3">
                   <div className="rounded-xl bg-slate-900/80 p-3 text-sm text-slate-300">
-                    按当前直播流发起点线构图识别。默认使用跟踪与对准流程，可配置展示线条、对准方向和容忍阈值。
+                    按当前直播流发起点线构图识别。目标线和目标点来自所选模版，可配置展示线条和容忍阈值。
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <label className="text-slate-300 text-sm">选择模版</label>
+                      <button
+                          onClick={() => void loadAlignmentTemplates()}
+                          disabled={alignmentTemplateLoading}
+                          className={`px-2 py-1 text-xs rounded ${
+                              alignmentTemplateLoading ? 'bg-slate-700' : 'bg-slate-600'
+                          }`}
+                      >
+                        刷新
+                      </button>
+                    </div>
+                    <select
+                        value={selectedAlignmentTemplateKey}
+                        onChange={e => setSelectedAlignmentTemplateKey(e.target.value)}
+                        className="w-full mt-2 bg-slate-900 text-white p-2 rounded"
+                    >
+                      <option value="">请选择模版</option>
+                      {alignmentTemplates.map(item => (
+                          <option key={item.key} value={item.key}>
+                            {item.key}
+                          </option>
+                      ))}
+                    </select>
+                    {selectedAlignmentTemplate ? (
+                        <div className="mt-2 text-xs text-slate-300 space-y-1">
+                          <div>点线构图对准-线：{selectedAlignmentTemplate.value.structureLineAlignmentLine}</div>
+                          <div>点线构图对准-点：{selectedAlignmentTemplate.value.structureLineAlignmentPoint}</div>
+                        </div>
+                    ) : (
+                        <div className="mt-2 text-xs text-amber-300">
+                          请先选择模版后再提交点线构图
+                        </div>
+                    )}
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
@@ -3163,42 +3273,6 @@ function LivePusher() {
                           className="h-4 w-4 rounded border-slate-500 bg-slate-800"
                       />
                       选择是否展示其他线条
-                    </label>
-
-                    <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
-                      <span>点线构图对准方向</span>
-                      <select
-                          value={guideLineForm.alignmentOrientation}
-                          onChange={e =>
-                              setGuideLineForm(prev => ({
-                                ...prev,
-                                alignmentOrientation: e.target.value as GuideLineAlignmentOrientation
-                              }))
-                          }
-                          className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
-                      >
-                        <option value="horizontal">水平（上下位置对准）</option>
-                        <option value="vertical">垂直（左右位置对准）</option>
-                      </select>
-                    </label>
-
-                    <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
-                      <span>参考线位置（0~1）</span>
-                      <input
-                          type="number"
-                          min="0"
-                          max="1"
-                          step="0.01"
-                          inputMode="decimal"
-                          value={guideLineForm.alignmentPosition}
-                          onChange={e =>
-                              setGuideLineForm(prev => ({
-                                ...prev,
-                                alignmentPosition: e.target.value
-                              }))
-                          }
-                          className="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-emerald-400"
-                      />
                     </label>
 
                     <label className="flex flex-col gap-2 rounded bg-slate-900 px-3 py-3 text-sm text-white">
@@ -3241,7 +3315,12 @@ function LivePusher() {
 
                   <button
                       onClick={handleSubmitGuideLine}
-                      className="w-full rounded-xl bg-emerald-500 py-2 text-white"
+                      disabled={!selectedAlignmentTemplate || alignmentTemplateLoading}
+                      className={`w-full rounded-xl py-2 text-white ${
+                          !selectedAlignmentTemplate || alignmentTemplateLoading
+                              ? 'bg-slate-600'
+                              : 'bg-emerald-500'
+                      }`}
                   >
                     提交
                   </button>

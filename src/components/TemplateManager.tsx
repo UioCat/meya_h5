@@ -8,6 +8,8 @@ type IntentTemplateFields = {
   orientation: string;
   compositionMethod: string;
   compositionObject: string;
+  structureLineAlignmentLine: string;
+  structureLineAlignmentPoint: string;
   cameraHeight: string;
   eyeStatus: string;
   mouthStatus: string;
@@ -56,7 +58,9 @@ const createDefaultFields = (
   compositionObject: intentTemplateOptions.compositionObject[1] ?? intentTemplateOptions.compositionObject[0] ?? '',
   cameraHeight: intentTemplateOptions.cameraHeight[0] ?? '',
   eyeStatus: intentTemplateOptions.eyeStatus[0] ?? '',
-  mouthStatus: intentTemplateOptions.mouthStatus[0] ?? ''
+  mouthStatus: intentTemplateOptions.mouthStatus[0] ?? '',
+  structureLineAlignmentLine: intentTemplateOptions.structureLineAlignmentLine[0] ?? '',
+  structureLineAlignmentPoint: intentTemplateOptions.structureLineAlignmentPoint[0] ?? ''
 });
 
 const createFieldConfig = (
@@ -70,8 +74,17 @@ const createFieldConfig = (
   { key: 'compositionObject', label: '构图对象', options: intentTemplateOptions.compositionObject },
   { key: 'cameraHeight', label: '机位高度（E）', options: intentTemplateOptions.cameraHeight },
   { key: 'eyeStatus', label: '眼睛状态', options: intentTemplateOptions.eyeStatus },
-  { key: 'mouthStatus', label: '嘴巴状态', options: intentTemplateOptions.mouthStatus }
+  { key: 'mouthStatus', label: '嘴巴状态', options: intentTemplateOptions.mouthStatus },
+  { key: 'structureLineAlignmentLine', label: '点线构图对准-线', options: intentTemplateOptions.structureLineAlignmentLine },
+  { key: 'structureLineAlignmentPoint', label: '点线构图对准-点', options: intentTemplateOptions.structureLineAlignmentPoint }
 ];
+
+const defaultableTemplateFields = new Set<keyof IntentTemplateFields>([
+  'cameraHeight',
+  'compositionObject',
+  'structureLineAlignmentLine',
+  'structureLineAlignmentPoint'
+]);
 
 const parseJsonSafely = (text: string) => {
   const trimmed = text.trim();
@@ -117,9 +130,9 @@ const parseTemplateValue = (
       obj[
         field.key
           .replace(/[A-Z]/g, match => `_${match.toLowerCase()}`)
-      ];
+    ];
     if (typeof rawValue !== 'string') {
-      if (field.key === 'cameraHeight' || field.key === 'compositionObject') {
+      if (defaultableTemplateFields.has(field.key)) {
         next[field.key] = defaultFields[field.key];
         continue;
       }
@@ -645,6 +658,8 @@ function TemplateManager({
                         <div>机位高度（E）：{selectedParsedValue.cameraHeight}</div>
                         <div>眼睛状态：{selectedParsedValue.eyeStatus}</div>
                         <div>嘴巴状态：{selectedParsedValue.mouthStatus}</div>
+                        <div>点线构图对准-线：{selectedParsedValue.structureLineAlignmentLine}</div>
+                        <div>点线构图对准-点：{selectedParsedValue.structureLineAlignmentPoint}</div>
                       </div>
                     ) : (
                       <div className="text-sm text-amber-300">

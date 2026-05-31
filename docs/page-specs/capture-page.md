@@ -57,15 +57,20 @@
   - `shot_subject_ratio_table`
   - `subject_ratio_score_table`
 - 前端根据模版中的 `shotType + bodyRange` 校验有效组合，并解析 `ratioMin / ratioMax`。
-- 提交体必须完整包含 `templateKey`、`streamUrl`、`scene`、`bodyRange`、`ratioMin`、`ratioMax`、`orientation`、`compositionMethod`、`compositionObject`、`cameraHeight`、`eyeStatus`、`mouthStatus`。
+- 提交体必须完整包含 `templateKey`、`streamUrl`、`scene`、`bodyRange`、`ratioMin`、`ratioMax`、`orientation`、`compositionMethod`、`compositionObject`、`structureLineAlignmentLine`、`structureLineAlignmentPoint`、`cameraHeight`、`eyeStatus`、`mouthStatus`。
+- 旧模版缺少 `structureLineAlignmentLine` / `structureLineAlignmentPoint` 时，读取层使用默认值 `H1` / `H1V1`，不应导致模版从下拉中消失。
 - 具体字段定义以 `docs/alignment-person-api.md` 为准。
 - WebSocket 回传阶段包括定高、定距、中心点对准等；页面据此显示相应 overlay。
 
 ### 点线构图
 
 - 只有在推流或旁观中可选。
-- 当前源码固定使用跟踪与对准流程，包含是否展示其他线条、对准方向、参考线位置、位置容忍比例和角度容忍度配置。
-- 提交到 `https://www.uiofield.top/meya/push`，请求体 `type: "guide_line"`。
+- 进入模式后复用 `intent_template` 模版下拉；用户必须选择模版后才能提交，未选择时提交按钮禁用并提示先选择模版。
+- 当前源码固定使用跟踪与对准流程；UI 保留是否展示其他线条、位置容忍比例和角度容忍度配置。
+- UI 不再提供「点线构图对准方向」和「参考线位置（0~1）」手动控件；这两个运行时兼容值由所选模版的 `structureLineAlignmentLine` 推导：
+  - `H1` / `H2` / `水平中心` -> `alignmentOrientation: "horizontal"`，`alignmentPosition: 1/3` / `2/3` / `0.5`
+  - `V1` / `V2` / `竖直中心` -> `alignmentOrientation: "vertical"`，`alignmentPosition: 1/3` / `2/3` / `0.5`
+- 提交到 `https://www.uiofield.top/meya/push`，请求体 `type: "guide_line"`，且必须包含 `templateKey`、`structureLineAlignmentLine`、`structureLineAlignmentPoint`。
 - WebSocket 回传后展示识别线、目标线、容忍范围、追踪区域和角度信息。
 - `isAlignmentLine === true` 或命中选中线的线条显示为绿色；其他线条显示为蓝色。
 
@@ -86,5 +91,6 @@
 - 手机端和桌面端视频容器、控制区和底部导航不重叠。
 - 推流/旁观启动、停止后状态文案正确。
 - `alignment_person` 只通过模版提交，且字段不缺失。
+- `guide_line` 只通过模版提交，且下发 `templateKey`、`structureLineAlignmentLine`、`structureLineAlignmentPoint`。
 - `guide_line` 绿色/蓝色线条语义正确。
 - `notify` 和运动提示不会遮挡关键控制按钮。
